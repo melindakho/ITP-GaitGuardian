@@ -11,6 +11,8 @@ import android.view.OrientationEventListener
 import android.view.Surface
 import android.view.ViewTreeObserver
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.CameraSelector
@@ -40,11 +42,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -315,6 +320,40 @@ fun CameraScreen(viewModel: CameraViewModel = viewModel(), navController: NavCon
 
     val box = viewModel.boundingBox.collectAsState().value
     val imageSize = viewModel.imageSize.collectAsState().value
+
+    // Upload video picker
+    val videoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+
+        // Copy picked video to app's external movies dir so it has a real file path
+        val outputFile = File(
+            context.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES),
+            "uploaded-video-${System.currentTimeMillis()}.mp4"
+        )
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                outputFile.outputStream().use { output -> input.copyTo(output) }
+            }
+            val assessmentId = UUID.randomUUID().toString()
+            val newTug = TUGAssessment(
+                testId = assessmentId,
+                dateTime = Date().time,
+                videoDuration = 0f, // unknown at upload time
+                videoTitle = outputFile.absolutePath,
+                onMedication = tugViewModel.onMedication.value,
+                patientComments = tugViewModel.selectedComments.value.joinToString(", ")
+            )
+            tugViewModel.insertNewAssessment(newTug)
+            Toast.makeText(context, "Video uploaded, processing…", Toast.LENGTH_SHORT).show()
+            navController.navigate("loading_screen")
+        } catch (e: Exception) {
+            Log.e("UploadVideo", "Failed to copy video", e)
+            Toast.makeText(context, "Failed to load video: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         if (isDeviceLandscape) {
             // Camera preview
@@ -352,8 +391,16 @@ fun CameraScreen(viewModel: CameraViewModel = viewModel(), navController: NavCon
                     )
                 }
             }
-        }
-        else { // In Portrait
+        
+            // Upload button
+            UploadVideoButton(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp),
+                onClick = { videoPicker.launch("video/*") }
+            )
+
+        } else { // In Portrait
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -380,6 +427,8 @@ fun CameraScreen(viewModel: CameraViewModel = viewModel(), navController: NavCon
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(16.dp))
+
+                UploadVideoButton(onClick = { videoPicker.launch("video/*") })
             }
         }
     }
@@ -458,6 +507,32 @@ fun CameraScreen(viewModel: CameraViewModel = viewModel(), navController: NavCon
         }, ContextCompat.getMainExecutor(context))
     }
 }
+
+// Upload button
+@Composable
+fun UploadVideoButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color.Black.copy(alpha = 0.6f)
+        )
+    ) {
+        Icon(
+            imageVector = Icons.Default.FileUpload,
+            contentDescription = "Upload Video",
+            tint = Color.White,
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text("Upload Video", color = Color.White, fontSize = 14.sp)
+    }
+}
+
 @Composable
 fun DistanceTestOverlay(viewModel: CameraViewModel) {
     val personDistance by viewModel.personDistance.collectAsState()
