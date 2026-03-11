@@ -6,7 +6,7 @@ import android.net.Uri
 import android.util.Log
 import com.example.gaitguardian.FeatureExtraction
 import com.example.gaitguardian.FrameProgressCallback
-import com.example.gaitguardian.PoseExtraction
+import com.example.gaitguardian.RTMOPoseExtractor
 import com.example.gaitguardian.TugPrediction
 import com.example.gaitguardian.data.models.TugResult
 import kotlinx.coroutines.Dispatchers
@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  * GaitAnalysisClient - Clean Pipeline Architecture
  * 
  * CLEAN PIPELINE FLOW:
- * 1. PoseExtraction → raw landmarks (MediaPipe Tasks API)
+ * 1. PoseExtraction → raw landmarks
  * 2. FeatureExtraction → 111 biomechanical features 
  * 3. TugPrediction → ONNX inference + smoothing + duration analysis
  * 4. GaitAnalysisClient → orchestrates the pipeline
@@ -33,7 +33,8 @@ class GaitAnalysisClient(private val context: Context) {
         private const val TAG = "GaitAnalysisClient"
     }
     
-    private val poseExtractor = PoseExtraction(context)
+    // private val poseExtractor = PoseExtraction(context)
+    private val poseExtractor = RTMOPoseExtractor(context)
     private val tugPredictor = TugPrediction(context)
     
     private var isInitialized = false
@@ -51,13 +52,13 @@ class GaitAnalysisClient(private val context: Context) {
                 }
                 Log.e(TAG, "TUG predictor initialized")
                 
-                // Initialize MediaPipe pose extractor
-                Log.e(TAG, "Initializing MediaPipe pose extractor...")
+                // Initialize pose estimation
+                Log.e(TAG, "Initializing pose estimation model...")
                 if (!poseExtractor.initialize()) {
-                    Log.e(TAG, "Failed to initialize MediaPipe pose extractor")
+                    Log.e(TAG, "Failed to initialize pose estimation model")
                     return@withContext false
                 }
-                Log.e(TAG, "MediaPipe pose extractor initialized")
+                Log.e(TAG, "Pose estimation model initialized")
                 
                 isInitialized = true
                 Log.e(TAG, "Local gait analysis components initialized successfully")
@@ -151,7 +152,7 @@ class GaitAnalysisClient(private val context: Context) {
      */
     private suspend fun analyzeVideoWithCorrectFPS(videoFile: File, progressCallback: FrameProgressCallback? = null): TugResult = withContext(Dispatchers.IO) {
         Log.e(TAG, "ENHANCED ANALYSIS WITH CORRECT FPS")
-        Log.d(TAG, "Starting enhanced MediaPipe analysis with correct timing...")
+        Log.d(TAG, "Start analysing gait video...")
         Log.d(TAG, "Video file: ${videoFile.name} (${videoFile.length()} bytes)")
 
         // Start overall timing
@@ -159,55 +160,60 @@ class GaitAnalysisClient(private val context: Context) {
 
         try {
             
-            // Step 1: Extract pose landmarks using MediaPipe 
-            Log.d(TAG, "Extracting pose landmarks with MediaPipe...")
+            // Step 1: Extract pose landmarks
+            Log.d(TAG, "Extracting pose landmarks...")
             val poseExtractionStartTime = System.currentTimeMillis()
             val videoUri = Uri.fromFile(videoFile)
             val videoLandmarksResult = poseExtractor.processVideoToLandmarksWithMetadata(videoUri, progressCallback)
             val poseExtractionEndTime = System.currentTimeMillis()
             
             Log.e(TAG, "Extracted ${videoLandmarksResult?.landmarks?.size ?: 0} pose landmark frames")
+            // Temporary: just log results, skip feature extraction
+            Log.e(TAG, "RTMO frames detected: ${videoLandmarksResult?.landmarks?.count { it != null }}/${videoLandmarksResult?.landmarks?.size}")
+            Log.e(TAG, "Time taken: ${System.currentTimeMillis() - overallStartTime}ms")
+            // Return dummy result for now
+            return@withContext createErrorResult("RTMO test - check logs for timing")
 
-            if (videoLandmarksResult == null || videoLandmarksResult.landmarks.isEmpty()) {
-                Log.e(TAG, "No pose landmarks extracted")
-                return@withContext createErrorResult("No pose landmarks detected in video")
-            }
+            // if (videoLandmarksResult == null || videoLandmarksResult.landmarks.isEmpty()) {
+            //     Log.e(TAG, "No pose landmarks extracted")
+            //     return@withContext createErrorResult("No pose landmarks detected in video")
+            // }
 
-            // Step 2: Run frame-by-frame TUG prediction using TugPrediction.processPoseLandmarks
-            Log.d(TAG, "Running frame-by-frame ONNX model on all ${videoLandmarksResult.landmarks.size} frames...")
-            val mlProcessingStartTime = System.currentTimeMillis()
-            val prediction = tugPredictor.processPoseLandmarks(videoLandmarksResult.landmarks, videoLandmarksResult.fps, progressCallback)
-            val mlProcessingEndTime = System.currentTimeMillis()
+            // // Step 2: Run frame-by-frame TUG prediction using TugPrediction.processPoseLandmarks
+            // Log.d(TAG, "Running frame-by-frame ONNX model on all ${videoLandmarksResult.landmarks.size} frames...")
+            // val mlProcessingStartTime = System.currentTimeMillis()
+            // val prediction = tugPredictor.processPoseLandmarks(videoLandmarksResult.landmarks, videoLandmarksResult.fps, progressCallback)
+            // val mlProcessingEndTime = System.currentTimeMillis()
             
-            val overallEndTime = System.currentTimeMillis()
+            // val overallEndTime = System.currentTimeMillis()
             
-            // Calculate timing metrics
-            val poseExtractionDuration = (poseExtractionEndTime - poseExtractionStartTime) / 1000.0
-            val mlProcessingDuration = (mlProcessingEndTime - mlProcessingStartTime) / 1000.0
-            val totalDuration = (overallEndTime - overallStartTime) / 1000.0
+            // // Calculate timing metrics
+            // val poseExtractionDuration = (poseExtractionEndTime - poseExtractionStartTime) / 1000.0
+            // val mlProcessingDuration = (mlProcessingEndTime - mlProcessingStartTime) / 1000.0
+            // val totalDuration = (overallEndTime - overallStartTime) / 1000.0
             
-            // Log comprehensive timing breakdown
-            Log.e(TAG, " ========== COMPLETE VIDEO ANALYSIS TIMING ==========")
-            Log.e(TAG, " TOTAL TIME: ${String.format("%.2f", totalDuration)} s")
-            Log.e(TAG, " ")
-            Log.e(TAG, " Pose Extraction: ${String.format("%.2f", poseExtractionDuration)} s (${String.format("%.1f", poseExtractionDuration/totalDuration*100)}%)")
-            Log.e(TAG, " ML Processing: ${String.format("%.2f", mlProcessingDuration)} s (${String.format("%.1f", mlProcessingDuration/totalDuration*100)}%)")
-            Log.e(TAG, "    └─ Feature Extraction + ONNX Prediction + Post-Processing")
-            Log.e(TAG, "       (See detailed breakdown in TugPrediction logs above)")
-            Log.e(TAG, " ")
-            Log.e(TAG, " Video Stats:")
-            Log.e(TAG, "    Frames: ${videoLandmarksResult.landmarks.size}")
-            Log.e(TAG, "    FPS: ${videoLandmarksResult.fps}")
-            Log.e(TAG, "    Video Duration: ${String.format("%.2f", videoLandmarksResult.landmarks.size / videoLandmarksResult.fps)} s")
-            Log.e(TAG, "=====================================================")
+            // // Log comprehensive timing breakdown
+            // Log.e(TAG, " ========== COMPLETE VIDEO ANALYSIS TIMING ==========")
+            // Log.e(TAG, " TOTAL TIME: ${String.format("%.2f", totalDuration)} s")
+            // Log.e(TAG, " ")
+            // Log.e(TAG, " Pose Extraction: ${String.format("%.2f", poseExtractionDuration)} s (${String.format("%.1f", poseExtractionDuration/totalDuration*100)}%)")
+            // Log.e(TAG, " ML Processing: ${String.format("%.2f", mlProcessingDuration)} s (${String.format("%.1f", mlProcessingDuration/totalDuration*100)}%)")
+            // Log.e(TAG, "    └─ Feature Extraction + ONNX Prediction + Post-Processing")
+            // Log.e(TAG, "       (See detailed breakdown in TugPrediction logs above)")
+            // Log.e(TAG, " ")
+            // Log.e(TAG, " Video Stats:")
+            // Log.e(TAG, "    Frames: ${videoLandmarksResult.landmarks.size}")
+            // Log.e(TAG, "    FPS: ${videoLandmarksResult.fps}")
+            // Log.e(TAG, "    Video Duration: ${String.format("%.2f", videoLandmarksResult.landmarks.size / videoLandmarksResult.fps)} s")
+            // Log.e(TAG, "=====================================================")
 
-            if (prediction.success) {
-                convertPredictionToTugResult(prediction)
-            } else {
-                val msg = if (prediction.error_message != null) "TUG prediction failed: ${prediction.error_message}"
-                        else "TUG prediction failed"
-                createErrorResult(msg)
-            }
+            // if (prediction.success) {
+            //     convertPredictionToTugResult(prediction)
+            // } else {
+            //     val msg = if (prediction.error_message != null) "TUG prediction failed: ${prediction.error_message}"
+            //             else "TUG prediction failed"
+            //     createErrorResult(msg)
+            // }
 
         } catch (e: Exception) {
             Log.e(TAG, "Error in enhanced analysis", e)
@@ -245,7 +251,7 @@ class GaitAnalysisClient(private val context: Context) {
     
     fun cleanup() {
         try {
-            // Close MediaPipe resources
+            // Close pose estimation
             poseExtractor.cleanup()
             Log.d(TAG, "GaitAnalysisClient cleaned up successfully")
         } catch (e: Exception) {
