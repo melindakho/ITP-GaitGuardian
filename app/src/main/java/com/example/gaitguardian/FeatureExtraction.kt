@@ -182,8 +182,10 @@ class FeatureExtraction {
             val landmarks = landmarksList[i]
             if (landmarks.size < 33) continue
             
-            val prevLandmarks = if (i > 0 && landmarksList[i - 1].size >= 33) landmarksList[i - 1] else landmarks
-            
+            val prevLandmarks = (i - 1 downTo 0)
+                .firstOrNull { landmarksList[it].size >= 33 }
+                ?.let { landmarksList[it] }
+                ?: landmarks
             fun point(idx: Int): FloatArray = floatArrayOf(landmarks[idx].x(), landmarks[idx].y())
             fun prevPoint(idx: Int): FloatArray = floatArrayOf(prevLandmarks[idx].x(), prevLandmarks[idx].y())
             
@@ -382,8 +384,12 @@ class FeatureExtraction {
             var recentMovementIntensity = 0f
             if (i >= 30) {
                 val recentFrames = landmarksList.subList(i - 30, i)
-                val recentHipYValues = recentFrames.map { (it[23].y() + it[24].y()) / 2f }
-                val recentHipXValues = recentFrames.map { (it[23].x() + it[24].x()) / 2f }
+                val recentHipYValues = recentFrames
+                    .filter { it.size >= 33 }
+                    .map { (it[23].y() + it[24].y()) / 2f }
+                val recentHipXValues = recentFrames
+                    .filter { it.size >= 33 }
+                    .map { (it[23].x() + it[24].x()) / 2f }
                 val recentHipYRange = recentHipYValues.maxOrNull()!! - recentHipYValues.minOrNull()!!
                 val recentHipXRange = recentHipXValues.maxOrNull()!! - recentHipXValues.minOrNull()!!
                 recentMovementIntensity = recentHipYRange + recentHipXRange
@@ -616,6 +622,8 @@ class FeatureExtraction {
             
             features.add(frameFeatures)
         }
+        
+        Log.e(TAG, "After main loop: features.size = ${features.size}")
         
         // Convert to DataFrame-like structure for rolling window operations
         val featureKeys = features[0].keys.toList()
