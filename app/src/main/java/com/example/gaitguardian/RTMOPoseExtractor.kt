@@ -21,7 +21,7 @@ import java.nio.FloatBuffer
  * Output per frame: List of persons, each person is FloatArray of shape (17, 3)
  * where each keypoint is [x, y, confidence] in original image coordinates
  */
-class RTMOPoseExtractor(private val context: Context) {
+class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
 
     companion object {
         private const val TAG = "RTMOPoseExtractor"
@@ -45,7 +45,7 @@ class RTMOPoseExtractor(private val context: Context) {
 
     // ── Initialization ────────────────────────────────────────────────────────
 
-    suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
         try {
             Log.d(TAG, "Initializing RTMO-t ONNX model...")
             ortEnvironment = OrtEnvironment.getEnvironment()
@@ -149,6 +149,33 @@ class RTMOPoseExtractor(private val context: Context) {
         }
     }
 
+    override suspend fun extractPoseSequence(
+        videoUri: Uri,
+        progressCallback: FrameProgressCallback?
+    ): PoseSequence? {
+        val result = processVideoToLandmarksWithMetadata(videoUri, progressCallback) ?: return null
+        val frames = result.landmarks.map { persons ->
+            PoseFrame(
+                persons = persons.orEmpty().map { keypoints ->
+                    PosePerson(
+                        keypoints = keypoints,
+                        keypointCount = NUM_KEYPOINTS,
+                        valuesPerKeypoint = 3,
+                        coordinateSpace = PoseCoordinateSpace.PIXEL
+                    )
+                }
+            )
+        }
+
+        return PoseSequence(
+            backend = PoseBackend.RTMO,
+            frames = frames,
+            fps = result.fps,
+            totalFrames = result.totalFrames,
+            duration = result.duration
+        )
+    }
+
     // ── ONNX Inference ────────────────────────────────────────────────────────
 
     private fun runInference(bitmap: Bitmap, origW: Int, origH: Int): List<FloatArray> {
@@ -237,7 +264,7 @@ class RTMOPoseExtractor(private val context: Context) {
 
     // ── Cleanup ───────────────────────────────────────────────────────────────
 
-    fun cleanup() {
+    override fun cleanup() {
         try {
             ortSession?.close()
             ortEnvironment?.close()

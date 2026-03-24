@@ -1,11 +1,12 @@
 package com.example.gaitguardian.api
 
 import android.content.Context
-import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
-import com.example.gaitguardian.FeatureExtraction
 import com.example.gaitguardian.FrameProgressCallback
+import com.example.gaitguardian.MediaPipePoseExtractor
+import com.example.gaitguardian.PoseBackend
+import com.example.gaitguardian.PoseExtractor
 import com.example.gaitguardian.RTMOPoseExtractor
 import com.example.gaitguardian.TugPrediction
 import com.example.gaitguardian.data.models.TugResult
@@ -14,9 +15,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
-import kotlin.math.roundToInt
-
-
 /**
  * GaitAnalysisClient - Clean Pipeline Architecture
  * 
@@ -33,10 +31,10 @@ class GaitAnalysisClient(private val context: Context) {
         private const val TAG = "GaitAnalysisClient"
         private const val RTMO_KEYPOINT_COUNT = 17
         private const val MEDIAPIPE_KEYPOINT_COUNT = 33
+        private val ACTIVE_BACKEND = PoseBackend.RTMO
     }
     
-    // private val poseExtractor = PoseExtraction(context)
-    private val poseExtractor = RTMOPoseExtractor(context)
+    private val poseExtractor: PoseExtractor = createPoseExtractor(context, ACTIVE_BACKEND)
     private val tugPredictor = TugPrediction(context)
     
     private var isInitialized = false
@@ -72,6 +70,13 @@ class GaitAnalysisClient(private val context: Context) {
             Log.d(TAG, "Components already initialized")
         }
         true
+    }
+
+    private fun createPoseExtractor(context: Context, backend: PoseBackend): PoseExtractor {
+        return when (backend) {
+            PoseBackend.RTMO -> RTMOPoseExtractor(context)
+            PoseBackend.MEDIAPIPE -> MediaPipePoseExtractor(context)
+        }
     }
 
     suspend fun analyzeVideo(videoUri: Uri, progressCallback: FrameProgressCallback? = null): TugResult {
@@ -166,43 +171,48 @@ class GaitAnalysisClient(private val context: Context) {
             Log.d(TAG, "Extracting pose landmarks...")
             val poseExtractionStartTime = System.currentTimeMillis()
             val videoUri = Uri.fromFile(videoFile)
-            val videoLandmarksResult = poseExtractor.processVideoToLandmarksWithMetadata(videoUri, progressCallback)
+            val poseSequence = poseExtractor.extractPoseSequence(videoUri, progressCallback)
             val poseExtractionEndTime = System.currentTimeMillis()
             
-            if (videoLandmarksResult == null || videoLandmarksResult.landmarks.isEmpty()) {
-                Log.e(TAG, "No RTMO landmarks extracted")
-                return@withContext createErrorResult("No RTMO landmarks detected in video")
+            if (poseSequence == null || poseSequence.frames.isEmpty()) {
+                Log.e(TAG, "No pose sequence extracted")
+                return@withContext createErrorResult("No pose landmarks detected in video")
             }
 
-            val detectedFrames = videoLandmarksResult.landmarks.count { !it.isNullOrEmpty() }
-            val firstDetectedFrame = videoLandmarksResult.landmarks.indexOfFirst { !it.isNullOrEmpty() }
-            val firstPerson = videoLandmarksResult.landmarks
-                .firstOrNull { !it.isNullOrEmpty() }
+            val detectedFrames = poseSequence.frames.count { it.persons.isNotEmpty() }
+            val firstDetectedFrame = poseSequence.frames.indexOfFirst { it.persons.isNotEmpty() }
+            val firstPerson = poseSequence.frames
+                .firstOrNull { it.persons.isNotEmpty() }
+                ?.persons
                 ?.firstOrNull()
 
-            Log.e(TAG, "Extracted ${videoLandmarksResult.landmarks.size} RTMO frames")
-            Log.e(TAG, "RTMO frames detected: $detectedFrames/${videoLandmarksResult.landmarks.size}")
+            Log.e(TAG, "Extracted ${poseSequence.frames.size} ${poseSequence.backend} frames")
+            Log.e(TAG, "${poseSequence.backend} frames detected: $detectedFrames/${poseSequence.frames.size}")
             Log.e(TAG, "First detected frame index: $firstDetectedFrame")
-            Log.e(TAG, "RTMO fps=${videoLandmarksResult.fps}, durationMs=${videoLandmarksResult.duration}")
+            Log.e(TAG, "${poseSequence.backend} fps=${poseSequence.fps}, durationMs=${poseSequence.duration}")
 
             if (firstPerson != null) {
-                val sample = (0 until minOf(3, firstPerson.size / 3)).joinToString(" | ") { index ->
-                    val base = index * 3
-                    "kp$index=(x=${"%.1f".format(firstPerson[base])}, y=${"%.1f".format(firstPerson[base + 1])}, c=${"%.3f".format(firstPerson[base + 2])})"
+                val sample = (0 until minOf(3, firstPerson.keypointCount)).joinToString(" | ") { index ->
+                    val base = index * firstPerson.valuesPerKeypoint
+                    val x = firstPerson.keypoints.getOrElse(base) { 0f }
+                    val y = firstPerson.keypoints.getOrElse(base + 1) { 0f }
+                    val confidence = firstPerson.keypoints.getOrElse(base + firstPerson.valuesPerKeypoint - 1) { 0f }
+                    "kp$index=(x=${"%.3f".format(x)}, y=${"%.3f".format(y)}, last=${"%.3f".format(confidence)})"
                 }
-                Log.e(TAG, "First RTMO person sample: $sample")
+                Log.e(TAG, "First ${poseSequence.backend} person sample: $sample")
             }
 
             Log.e(TAG, "Time taken: ${System.currentTimeMillis() - overallStartTime}ms")
             Log.e(
                 TAG,
-                "Pipeline mismatch: RTMO provides $RTMO_KEYPOINT_COUNT keypoints, " +
+                "Pipeline mismatch: ${poseSequence.backend} provides " +
+                    "${firstPerson?.keypointCount ?: 0} keypoints with ${firstPerson?.valuesPerKeypoint ?: 0} values each, " +
                     "but FeatureExtraction/TugPrediction still expect $MEDIAPIPE_KEYPOINT_COUNT MediaPipe landmarks."
             )
             return@withContext createErrorResult(
-                "RTMO extraction works, but prediction is not wired yet: current " +
+                "${poseSequence.backend} extraction works, but prediction is not wired yet: current " +
                     "FeatureExtraction/TugPrediction expects $MEDIAPIPE_KEYPOINT_COUNT MediaPipe landmarks, " +
-                    "while RTMO provides $RTMO_KEYPOINT_COUNT keypoints."
+                    "while ${poseSequence.backend} currently provides ${firstPerson?.keypointCount ?: RTMO_KEYPOINT_COUNT} keypoints."
             )
 
             // if (videoLandmarksResult == null || videoLandmarksResult.landmarks.isEmpty()) {
