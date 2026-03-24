@@ -3,6 +3,7 @@ package com.example.gaitguardian.api
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import com.example.gaitguardian.FeatureExtraction
 import com.example.gaitguardian.FrameProgressCallback
 import com.example.gaitguardian.TugPrediction
 import com.example.gaitguardian.data.models.TugResult
@@ -31,7 +32,7 @@ class GaitAnalysisClient(private val context: Context) {
         private const val TAG = "GaitAnalysisClient"
         private const val RTMO_KEYPOINT_COUNT = 17
         private const val MEDIAPIPE_KEYPOINT_COUNT = 33
-        private val ACTIVE_BACKEND = PoseBackend.RTMO
+        private val ACTIVE_BACKEND = PoseBackend.MEDIAPIPE
     }
     
     private val poseExtractor: PoseExtractor = createPoseExtractor(context, ACTIVE_BACKEND)
@@ -166,54 +167,20 @@ class GaitAnalysisClient(private val context: Context) {
         val overallStartTime = System.currentTimeMillis()
 
         try {
-            
-            // Step 1: Extract pose landmarks
-            Log.d(TAG, "Extracting pose landmarks...")
-            val poseExtractionStartTime = System.currentTimeMillis()
             val videoUri = Uri.fromFile(videoFile)
-            val poseSequence = poseExtractor.extractPoseSequence(videoUri, progressCallback)
-            val poseExtractionEndTime = System.currentTimeMillis()
-            
-            if (poseSequence == null || poseSequence.frames.isEmpty()) {
-                Log.e(TAG, "No pose sequence extracted")
-                return@withContext createErrorResult("No pose landmarks detected in video")
+
+            when (ACTIVE_BACKEND) {
+                PoseBackend.MEDIAPIPE -> runMediaPipeXgboostPipeline(
+                    videoUri = videoUri,
+                    overallStartTime = overallStartTime,
+                    progressCallback = progressCallback
+                )
+                PoseBackend.RTMO -> runRtmoDebugPipeline(
+                    videoUri = videoUri,
+                    overallStartTime = overallStartTime,
+                    progressCallback = progressCallback
+                )
             }
-
-            val detectedFrames = poseSequence.frames.count { it.persons.isNotEmpty() }
-            val firstDetectedFrame = poseSequence.frames.indexOfFirst { it.persons.isNotEmpty() }
-            val firstPerson = poseSequence.frames
-                .firstOrNull { it.persons.isNotEmpty() }
-                ?.persons
-                ?.firstOrNull()
-
-            Log.e(TAG, "Extracted ${poseSequence.frames.size} ${poseSequence.backend} frames")
-            Log.e(TAG, "${poseSequence.backend} frames detected: $detectedFrames/${poseSequence.frames.size}")
-            Log.e(TAG, "First detected frame index: $firstDetectedFrame")
-            Log.e(TAG, "${poseSequence.backend} fps=${poseSequence.fps}, durationMs=${poseSequence.duration}")
-
-            if (firstPerson != null) {
-                val sample = (0 until minOf(3, firstPerson.keypointCount)).joinToString(" | ") { index ->
-                    val base = index * firstPerson.valuesPerKeypoint
-                    val x = firstPerson.keypoints.getOrElse(base) { 0f }
-                    val y = firstPerson.keypoints.getOrElse(base + 1) { 0f }
-                    val confidence = firstPerson.keypoints.getOrElse(base + firstPerson.valuesPerKeypoint - 1) { 0f }
-                    "kp$index=(x=${"%.3f".format(x)}, y=${"%.3f".format(y)}, last=${"%.3f".format(confidence)})"
-                }
-                Log.e(TAG, "First ${poseSequence.backend} person sample: $sample")
-            }
-
-            Log.e(TAG, "Time taken: ${System.currentTimeMillis() - overallStartTime}ms")
-            Log.e(
-                TAG,
-                "Pipeline mismatch: ${poseSequence.backend} provides " +
-                    "${firstPerson?.keypointCount ?: 0} keypoints with ${firstPerson?.valuesPerKeypoint ?: 0} values each, " +
-                    "but FeatureExtraction/TugPrediction still expect $MEDIAPIPE_KEYPOINT_COUNT MediaPipe landmarks."
-            )
-            return@withContext createErrorResult(
-                "${poseSequence.backend} extraction works, but prediction is not wired yet: current " +
-                    "FeatureExtraction/TugPrediction expects $MEDIAPIPE_KEYPOINT_COUNT MediaPipe landmarks, " +
-                    "while ${poseSequence.backend} currently provides ${firstPerson?.keypointCount ?: RTMO_KEYPOINT_COUNT} keypoints."
-            )
 
             // if (videoLandmarksResult == null || videoLandmarksResult.landmarks.isEmpty()) {
             //     Log.e(TAG, "No pose landmarks extracted")
@@ -260,6 +227,110 @@ class GaitAnalysisClient(private val context: Context) {
             Log.e(TAG, "Error in enhanced analysis", e)
             createErrorResult("Enhanced analysis failed: ${e.message}")
         }
+    }
+
+    private suspend fun runMediaPipeXgboostPipeline(
+        videoUri: Uri,
+        overallStartTime: Long,
+        progressCallback: FrameProgressCallback?
+    ): TugResult {
+        val mediaPipeExtractor = poseExtractor as? MediaPipePoseExtractor
+            ?: return createErrorResult("MediaPipe backend selected but extractor is not MediaPipe")
+
+        val poseExtractionStartTime = System.currentTimeMillis()
+        val videoLandmarksResult = mediaPipeExtractor.processVideoToLandmarksWithMetadata(
+            videoUri,
+            progressCallback
+        )
+        val poseExtractionEndTime = System.currentTimeMillis()
+
+        if (videoLandmarksResult == null || videoLandmarksResult.landmarks.isEmpty()) {
+            Log.e(TAG, "No MediaPipe landmarks extracted")
+            return createErrorResult("No pose landmarks detected in video")
+        }
+
+        Log.e(
+            TAG,
+            "MediaPipe frames detected: ${videoLandmarksResult.landmarks.count { it.isNotEmpty() }}/${videoLandmarksResult.landmarks.size}"
+        )
+
+        Log.d(TAG, "Running frame-by-frame ONNX model on all ${videoLandmarksResult.landmarks.size} frames...")
+        val mlProcessingStartTime = System.currentTimeMillis()
+        val prediction = tugPredictor.processPoseLandmarks(
+            videoLandmarksResult.landmarks,
+            videoLandmarksResult.fps,
+            progressCallback
+        )
+        val mlProcessingEndTime = System.currentTimeMillis()
+        val overallEndTime = System.currentTimeMillis()
+
+        val poseExtractionDuration = (poseExtractionEndTime - poseExtractionStartTime) / 1000.0
+        val mlProcessingDuration = (mlProcessingEndTime - mlProcessingStartTime) / 1000.0
+        val totalDuration = (overallEndTime - overallStartTime) / 1000.0
+
+        Log.e(TAG, "========== COMPLETE VIDEO ANALYSIS TIMING ==========")
+        Log.e(TAG, "TOTAL TIME: ${String.format("%.2f", totalDuration)} s")
+        Log.e(TAG, "Pose Extraction: ${String.format("%.2f", poseExtractionDuration)} s")
+        Log.e(TAG, "ML Processing: ${String.format("%.2f", mlProcessingDuration)} s")
+        Log.e(TAG, "Frames: ${videoLandmarksResult.landmarks.size}")
+        Log.e(TAG, "FPS: ${videoLandmarksResult.fps}")
+        Log.e(TAG, "===================================================")
+
+        return if (prediction.success) {
+            convertPredictionToTugResult(prediction)
+        } else {
+            val msg = prediction.error_message ?: "TUG prediction failed"
+            createErrorResult(msg)
+        }
+    }
+
+    private suspend fun runRtmoDebugPipeline(
+        videoUri: Uri,
+        overallStartTime: Long,
+        progressCallback: FrameProgressCallback?
+    ): TugResult {
+        val poseSequence = poseExtractor.extractPoseSequence(videoUri, progressCallback)
+
+        if (poseSequence == null || poseSequence.frames.isEmpty()) {
+            Log.e(TAG, "No pose sequence extracted")
+            return createErrorResult("No pose landmarks detected in video")
+        }
+
+        val detectedFrames = poseSequence.frames.count { it.persons.isNotEmpty() }
+        val firstDetectedFrame = poseSequence.frames.indexOfFirst { it.persons.isNotEmpty() }
+        val firstPerson = poseSequence.frames
+            .firstOrNull { it.persons.isNotEmpty() }
+            ?.persons
+            ?.firstOrNull()
+
+        Log.e(TAG, "Extracted ${poseSequence.frames.size} ${poseSequence.backend} frames")
+        Log.e(TAG, "${poseSequence.backend} frames detected: $detectedFrames/${poseSequence.frames.size}")
+        Log.e(TAG, "First detected frame index: $firstDetectedFrame")
+        Log.e(TAG, "${poseSequence.backend} fps=${poseSequence.fps}, durationMs=${poseSequence.duration}")
+
+        if (firstPerson != null) {
+            val sample = (0 until minOf(3, firstPerson.keypointCount)).joinToString(" | ") { index ->
+                val base = index * firstPerson.valuesPerKeypoint
+                val x = firstPerson.keypoints.getOrElse(base) { 0f }
+                val y = firstPerson.keypoints.getOrElse(base + 1) { 0f }
+                val confidence = firstPerson.keypoints.getOrElse(base + firstPerson.valuesPerKeypoint - 1) { 0f }
+                "kp$index=(x=${"%.3f".format(x)}, y=${"%.3f".format(y)}, last=${"%.3f".format(confidence)})"
+            }
+            Log.e(TAG, "First ${poseSequence.backend} person sample: $sample")
+        }
+
+        Log.e(TAG, "Time taken: ${System.currentTimeMillis() - overallStartTime}ms")
+        Log.e(
+            TAG,
+            "Pipeline mismatch: ${poseSequence.backend} provides " +
+                "${firstPerson?.keypointCount ?: 0} keypoints with ${firstPerson?.valuesPerKeypoint ?: 0} values each, " +
+                "but FeatureExtraction/TugPrediction still expect $MEDIAPIPE_KEYPOINT_COUNT MediaPipe landmarks."
+        )
+        return createErrorResult(
+            "${poseSequence.backend} extraction works, but prediction is not wired yet: current " +
+                "FeatureExtraction/TugPrediction expects $MEDIAPIPE_KEYPOINT_COUNT MediaPipe landmarks, " +
+                "while ${poseSequence.backend} currently provides ${firstPerson?.keypointCount ?: RTMO_KEYPOINT_COUNT} keypoints."
+        )
     }
     
     /**
