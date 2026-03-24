@@ -20,13 +20,6 @@ import java.io.FileWriter
  */
 
 /**
- * Callback interface for frame progress updates
- */
-fun interface FrameProgressCallback {
-    fun onProgress(currentFrame: Int, totalFrames: Int, stage: String)
-}
-
-/**
  * Data class to return both landmarks and video metadata
  */
 data class VideoLandmarksResult(
