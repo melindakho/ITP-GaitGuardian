@@ -3,10 +3,10 @@ package com.example.gaitguardian.api
 import android.content.Context
 import android.net.Uri
 import android.util.Log
-import com.example.gaitguardian.FeatureExtraction
 import com.example.gaitguardian.FrameProgressCallback
 import com.example.gaitguardian.TugPrediction
 import com.example.gaitguardian.data.models.TugResult
+import com.example.gaitguardian.pipeline.prediction.rtmo.RtmoPhaseModelInputAdapter
 import com.example.gaitguardian.pipeline.pose.core.PoseBackend
 import com.example.gaitguardian.pipeline.pose.core.PoseExtractor
 import com.example.gaitguardian.pipeline.pose.mediapipe.MediaPipePoseExtractor
@@ -30,12 +30,12 @@ import java.io.InputStream
 class GaitAnalysisClient(private val context: Context) {
     companion object {
         private const val TAG = "GaitAnalysisClient"
-        private const val RTMO_KEYPOINT_COUNT = 17
         private const val MEDIAPIPE_KEYPOINT_COUNT = 33
-        private val ACTIVE_BACKEND = PoseBackend.MEDIAPIPE
+        private val ACTIVE_BACKEND = PoseBackend.RTMO
     }
     
     private val poseExtractor: PoseExtractor = createPoseExtractor(context, ACTIVE_BACKEND)
+    private val rtmoPhaseInputAdapter = RtmoPhaseModelInputAdapter()
     private val tugPredictor = TugPrediction(context)
     
     private var isInitialized = false
@@ -296,40 +296,41 @@ class GaitAnalysisClient(private val context: Context) {
             return createErrorResult("No pose landmarks detected in video")
         }
 
-        val detectedFrames = poseSequence.frames.count { it.persons.isNotEmpty() }
-        val firstDetectedFrame = poseSequence.frames.indexOfFirst { it.persons.isNotEmpty() }
-        val firstPerson = poseSequence.frames
-            .firstOrNull { it.persons.isNotEmpty() }
-            ?.persons
-            ?.firstOrNull()
+        val phaseInput = rtmoPhaseInputAdapter.adapt(poseSequence)
+        val firstDetectedFrame = phaseInput.frames.firstOrNull { it.hasPose }?.frameIndex ?: -1
+        val firstDetectedPhaseFrame = phaseInput.frames.firstOrNull { it.hasPose }
 
         Log.e(TAG, "Extracted ${poseSequence.frames.size} ${poseSequence.backend} frames")
-        Log.e(TAG, "${poseSequence.backend} frames detected: $detectedFrames/${poseSequence.frames.size}")
+        Log.e(TAG, "${poseSequence.backend} frames detected: ${phaseInput.detectedFrames}/${poseSequence.frames.size}")
         Log.e(TAG, "First detected frame index: $firstDetectedFrame")
         Log.e(TAG, "${poseSequence.backend} fps=${poseSequence.fps}, durationMs=${poseSequence.duration}")
+        Log.e(
+            TAG,
+            "RTMO phase input: sequenceLength=${phaseInput.sequenceLength}, " +
+                "featuresPerFrame=${phaseInput.featuresPerFrame}, keypoints=${phaseInput.keypointIndices}"
+        )
 
-        if (firstPerson != null) {
-            val sample = (0 until minOf(3, firstPerson.keypointCount)).joinToString(" | ") { index ->
-                val base = index * firstPerson.valuesPerKeypoint
-                val x = firstPerson.keypoints.getOrElse(base) { 0f }
-                val y = firstPerson.keypoints.getOrElse(base + 1) { 0f }
-                val confidence = firstPerson.keypoints.getOrElse(base + firstPerson.valuesPerKeypoint - 1) { 0f }
-                "kp$index=(x=${"%.3f".format(x)}, y=${"%.3f".format(y)}, last=${"%.3f".format(confidence)})"
+        if (firstDetectedPhaseFrame != null) {
+            val sample = (0 until minOf(3, phaseInput.keypointIndices.size)).joinToString(" | ") { index ->
+                val base = index * 3
+                val x = firstDetectedPhaseFrame.features.getOrElse(base) { 0f }
+                val y = firstDetectedPhaseFrame.features.getOrElse(base + 1) { 0f }
+                val confidence = firstDetectedPhaseFrame.features.getOrElse(base + 2) { 0f }
+                "kp${phaseInput.keypointIndices[index]}=(x=${"%.3f".format(x)}, y=${"%.3f".format(y)}, conf=${"%.3f".format(confidence)})"
             }
-            Log.e(TAG, "First ${poseSequence.backend} person sample: $sample")
+            Log.e(TAG, "First ${poseSequence.backend} normalized sample: $sample")
         }
 
         Log.e(TAG, "Time taken: ${System.currentTimeMillis() - overallStartTime}ms")
         Log.e(
             TAG,
-            "Pipeline mismatch: ${poseSequence.backend} provides " +
-                "${firstPerson?.keypointCount ?: 0} keypoints with ${firstPerson?.valuesPerKeypoint ?: 0} values each, " +
-                "but FeatureExtraction/TugPrediction still expect $MEDIAPIPE_KEYPOINT_COUNT MediaPipe landmarks."
+            "RTMO phase input is ready, but LSTM/MLP inference is not wired yet. " +
+                "The legacy FeatureExtraction/TugPrediction stack still expects $MEDIAPIPE_KEYPOINT_COUNT MediaPipe landmarks."
         )
         return createErrorResult(
-            "${poseSequence.backend} extraction works, but prediction is not wired yet: current " +
-                "FeatureExtraction/TugPrediction expects $MEDIAPIPE_KEYPOINT_COUNT MediaPipe landmarks, " +
-                "while ${poseSequence.backend} currently provides ${firstPerson?.keypointCount ?: RTMO_KEYPOINT_COUNT} keypoints."
+            "${poseSequence.backend} extraction and phase-model input preparation work, but prediction is not wired yet: " +
+                "the legacy FeatureExtraction/TugPrediction stack expects $MEDIAPIPE_KEYPOINT_COUNT MediaPipe landmarks, " +
+                "while the new RTMO path now prepares ${phaseInput.featuresPerFrame} values per frame for LSTM input."
         )
     }
     
