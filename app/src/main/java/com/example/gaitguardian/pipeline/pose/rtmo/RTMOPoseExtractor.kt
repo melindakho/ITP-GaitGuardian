@@ -2,6 +2,9 @@ package com.example.gaitguardian.pipeline.pose.rtmo
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
@@ -39,6 +42,13 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
     private var ortEnvironment: OrtEnvironment? = null
     private var ortSession: OrtSession? = null
     private var isInitialized = false
+
+    private data class ResizeMetadata(
+        val bitmap: Bitmap,
+        val scale: Float,
+        val padLeft: Float,
+        val padTop: Float
+    )
 
     override suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
         try {
@@ -169,8 +179,11 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
         val env = ortEnvironment ?: return emptyList()
 
         return try {
-            val resized = Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, true)
-            val argb = resized.copy(Bitmap.Config.ARGB_8888, false)
+            // TODO: Android RTMO keypoints are now close to the Python/MMPose pipeline,
+            // but small coordinate differences remain. Revisit resize/decode parity only
+            // if downstream severity predictions diverge meaningfully from Python.
+            val resized = resizeWithPadding(bitmap)
+            val argb = resized.bitmap.copy(Bitmap.Config.ARGB_8888, false)
             val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
             argb.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
 
@@ -182,7 +195,7 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
                 floatArray[2 * INPUT_SIZE * INPUT_SIZE + i] = (pixel and 0xFF).toFloat()
             }
 
-            resized.recycle()
+            resized.bitmap.recycle()
             argb.recycle()
 
             val inputTensor = OnnxTensor.createTensor(
@@ -198,8 +211,6 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
             inputTensor.close()
             results.close()
 
-            val scaleX = origW.toFloat() / INPUT_SIZE
-            val scaleY = origH.toFloat() / INPUT_SIZE
             val detections = mutableListOf<FloatArray>()
 
             for (i in dets.indices) {
@@ -211,8 +222,10 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
 
                 for (j in 0 until NUM_KEYPOINTS) {
                     val kp = personKps[j] as FloatArray
-                    keypointArray[j * 3] = kp[0] * scaleX
-                    keypointArray[j * 3 + 1] = kp[1] * scaleY
+                    keypointArray[j * 3] = ((kp[0] - resized.padLeft) / resized.scale)
+                        .coerceIn(0f, origW.toFloat())
+                    keypointArray[j * 3 + 1] = ((kp[1] - resized.padTop) / resized.scale)
+                        .coerceIn(0f, origH.toFloat())
                     keypointArray[j * 3 + 2] = kp[2]
                 }
 
@@ -224,5 +237,32 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
             Log.e(TAG, "Inference error: ${e.message}")
             emptyList()
         }
+    }
+
+    private fun resizeWithPadding(bitmap: Bitmap): ResizeMetadata {
+        val scale = minOf(
+            INPUT_SIZE.toFloat() / bitmap.width.toFloat(),
+            INPUT_SIZE.toFloat() / bitmap.height.toFloat()
+        )
+        val resizedWidth = (bitmap.width * scale).toInt().coerceAtLeast(1)
+        val resizedHeight = (bitmap.height * scale).toInt().coerceAtLeast(1)
+        val padLeft = (INPUT_SIZE - resizedWidth) / 2f
+        val padTop = (INPUT_SIZE - resizedHeight) / 2f
+
+        val scaledBitmap = Bitmap.createScaledBitmap(bitmap, resizedWidth, resizedHeight, true)
+        val outputBitmap = Bitmap.createBitmap(INPUT_SIZE, INPUT_SIZE, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(outputBitmap)
+        canvas.drawColor(Color.rgb(114, 114, 114))
+        canvas.drawBitmap(scaledBitmap, padLeft, padTop, Paint(Paint.FILTER_BITMAP_FLAG))
+        if (scaledBitmap !== bitmap) {
+            scaledBitmap.recycle()
+        }
+
+        return ResizeMetadata(
+            bitmap = outputBitmap,
+            scale = scale,
+            padLeft = padLeft,
+            padTop = padTop
+        )
     }
 }
