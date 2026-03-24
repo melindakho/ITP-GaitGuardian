@@ -31,6 +31,8 @@ import kotlin.math.roundToInt
 class GaitAnalysisClient(private val context: Context) {
     companion object {
         private const val TAG = "GaitAnalysisClient"
+        private const val RTMO_KEYPOINT_COUNT = 17
+        private const val MEDIAPIPE_KEYPOINT_COUNT = 33
     }
     
     // private val poseExtractor = PoseExtraction(context)
@@ -167,12 +169,41 @@ class GaitAnalysisClient(private val context: Context) {
             val videoLandmarksResult = poseExtractor.processVideoToLandmarksWithMetadata(videoUri, progressCallback)
             val poseExtractionEndTime = System.currentTimeMillis()
             
-            Log.e(TAG, "Extracted ${videoLandmarksResult?.landmarks?.size ?: 0} pose landmark frames")
-            // Temporary: just log results, skip feature extraction
-            Log.e(TAG, "RTMO frames detected: ${videoLandmarksResult?.landmarks?.count { it != null }}/${videoLandmarksResult?.landmarks?.size}")
+            if (videoLandmarksResult == null || videoLandmarksResult.landmarks.isEmpty()) {
+                Log.e(TAG, "No RTMO landmarks extracted")
+                return@withContext createErrorResult("No RTMO landmarks detected in video")
+            }
+
+            val detectedFrames = videoLandmarksResult.landmarks.count { !it.isNullOrEmpty() }
+            val firstDetectedFrame = videoLandmarksResult.landmarks.indexOfFirst { !it.isNullOrEmpty() }
+            val firstPerson = videoLandmarksResult.landmarks
+                .firstOrNull { !it.isNullOrEmpty() }
+                ?.firstOrNull()
+
+            Log.e(TAG, "Extracted ${videoLandmarksResult.landmarks.size} RTMO frames")
+            Log.e(TAG, "RTMO frames detected: $detectedFrames/${videoLandmarksResult.landmarks.size}")
+            Log.e(TAG, "First detected frame index: $firstDetectedFrame")
+            Log.e(TAG, "RTMO fps=${videoLandmarksResult.fps}, durationMs=${videoLandmarksResult.duration}")
+
+            if (firstPerson != null) {
+                val sample = (0 until minOf(3, firstPerson.size / 3)).joinToString(" | ") { index ->
+                    val base = index * 3
+                    "kp$index=(x=${"%.1f".format(firstPerson[base])}, y=${"%.1f".format(firstPerson[base + 1])}, c=${"%.3f".format(firstPerson[base + 2])})"
+                }
+                Log.e(TAG, "First RTMO person sample: $sample")
+            }
+
             Log.e(TAG, "Time taken: ${System.currentTimeMillis() - overallStartTime}ms")
-            // Return dummy result for now
-            return@withContext createErrorResult("RTMO test - check logs for timing")
+            Log.e(
+                TAG,
+                "Pipeline mismatch: RTMO provides $RTMO_KEYPOINT_COUNT keypoints, " +
+                    "but FeatureExtraction/TugPrediction still expect $MEDIAPIPE_KEYPOINT_COUNT MediaPipe landmarks."
+            )
+            return@withContext createErrorResult(
+                "RTMO extraction works, but prediction is not wired yet: current " +
+                    "FeatureExtraction/TugPrediction expects $MEDIAPIPE_KEYPOINT_COUNT MediaPipe landmarks, " +
+                    "while RTMO provides $RTMO_KEYPOINT_COUNT keypoints."
+            )
 
             // if (videoLandmarksResult == null || videoLandmarksResult.landmarks.isEmpty()) {
             //     Log.e(TAG, "No pose landmarks extracted")
