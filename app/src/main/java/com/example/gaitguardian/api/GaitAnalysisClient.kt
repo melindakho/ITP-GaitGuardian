@@ -4,12 +4,12 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import com.example.gaitguardian.FrameProgressCallback
-import com.example.gaitguardian.MediaPipePoseExtractor
-import com.example.gaitguardian.PoseBackend
-import com.example.gaitguardian.PoseExtractor
-import com.example.gaitguardian.RTMOPoseExtractor
 import com.example.gaitguardian.TugPrediction
 import com.example.gaitguardian.data.models.TugResult
+import com.example.gaitguardian.pipeline.pose.core.PoseBackend
+import com.example.gaitguardian.pipeline.pose.core.PoseExtractor
+import com.example.gaitguardian.pipeline.pose.mediapipe.MediaPipePoseExtractor
+import com.example.gaitguardian.pipeline.pose.rtmo.RTMOPoseExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
