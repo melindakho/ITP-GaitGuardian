@@ -7,6 +7,8 @@ import com.example.gaitguardian.FrameProgressCallback
 import com.example.gaitguardian.TugPrediction
 import com.example.gaitguardian.data.models.TugResult
 import com.example.gaitguardian.pipeline.prediction.rtmo.RtmoPhaseModelInputAdapter
+import com.example.gaitguardian.pipeline.prediction.rtmo.RtmoSequenceNormalizer
+import com.example.gaitguardian.pipeline.prediction.rtmo.RtmoTemporalInterpolator
 import com.example.gaitguardian.pipeline.pose.core.PoseBackend
 import com.example.gaitguardian.pipeline.pose.core.PoseExtractor
 import com.example.gaitguardian.pipeline.pose.mediapipe.MediaPipePoseExtractor
@@ -36,6 +38,8 @@ class GaitAnalysisClient(private val context: Context) {
     
     private val poseExtractor: PoseExtractor = createPoseExtractor(context, ACTIVE_BACKEND)
     private val rtmoPhaseInputAdapter = RtmoPhaseModelInputAdapter()
+    private val rtmoTemporalInterpolator = RtmoTemporalInterpolator()
+    private val rtmoSequenceNormalizer = RtmoSequenceNormalizer()
     private val tugPredictor = TugPrediction(context)
     
     private var isInitialized = false
@@ -297,6 +301,8 @@ class GaitAnalysisClient(private val context: Context) {
         }
 
         val phaseInput = rtmoPhaseInputAdapter.adapt(poseSequence)
+        val interpolatedSequence = rtmoTemporalInterpolator.interpolate(phaseInput)
+        val normalizedSequence = rtmoSequenceNormalizer.normalize(interpolatedSequence)
         val firstDetectedFrame = phaseInput.frames.firstOrNull { it.hasPose }?.frameIndex ?: -1
         val firstDetectedPhaseFrame = phaseInput.frames.firstOrNull { it.hasPose }
 
@@ -306,19 +312,43 @@ class GaitAnalysisClient(private val context: Context) {
         Log.e(TAG, "${poseSequence.backend} fps=${poseSequence.fps}, durationMs=${poseSequence.duration}")
         Log.e(
             TAG,
-            "RTMO phase input: sequenceLength=${phaseInput.sequenceLength}, " +
+            "RTMO reduced sequence: sequenceLength=${phaseInput.sequenceLength}, " +
                 "featuresPerFrame=${phaseInput.featuresPerFrame}, keypoints=${phaseInput.keypointIndices}"
+        )
+        Log.e(
+            TAG,
+            "RTMO interpolated sequence: frames=${interpolatedSequence.frameCount}, " +
+                "joints=${interpolatedSequence.jointCount}, dims=${interpolatedSequence.dimensionsPerJoint}, " +
+                "nanFrames=${interpolatedSequence.nanFrameCount}"
+        )
+        Log.e(
+            TAG,
+            "RTMO normalized sequence: frames=${normalizedSequence.frameCount}, " +
+                "joints=${normalizedSequence.jointCount}, dims=${normalizedSequence.dimensionsPerJoint}, " +
+                "scale=${"%.6f".format(normalizedSequence.normalizationScale)}"
         )
 
         if (firstDetectedPhaseFrame != null) {
-            val sample = (0 until minOf(3, phaseInput.keypointIndices.size)).joinToString(" | ") { index ->
+            val rawSample = (0 until minOf(3, phaseInput.keypointIndices.size)).joinToString(" | ") { index ->
                 val base = index * 3
                 val x = firstDetectedPhaseFrame.features.getOrElse(base) { 0f }
                 val y = firstDetectedPhaseFrame.features.getOrElse(base + 1) { 0f }
                 val confidence = firstDetectedPhaseFrame.features.getOrElse(base + 2) { 0f }
                 "kp${phaseInput.keypointIndices[index]}=(x=${"%.3f".format(x)}, y=${"%.3f".format(y)}, conf=${"%.3f".format(confidence)})"
             }
-            Log.e(TAG, "First ${poseSequence.backend} normalized sample: $sample")
+            Log.e(TAG, "First ${poseSequence.backend} reduced sample: $rawSample")
+
+            val interpolatedSample = (0 until minOf(3, interpolatedSequence.jointCount)).joinToString(" | ") { index ->
+                val point = interpolatedSequence.coordinates[firstDetectedFrame.coerceAtLeast(0)][index]
+                "kp${phaseInput.keypointIndices[index]}=(x=${"%.3f".format(point[0])}, y=${"%.3f".format(point[1])})"
+            }
+            Log.e(TAG, "First ${poseSequence.backend} interpolated sample: $interpolatedSample")
+
+            val normalizedSample = (0 until minOf(3, normalizedSequence.jointCount)).joinToString(" | ") { index ->
+                val point = normalizedSequence.coordinates[firstDetectedFrame.coerceAtLeast(0)][index]
+                "kp${phaseInput.keypointIndices[index]}=(x=${"%.3f".format(point[0])}, y=${"%.3f".format(point[1])})"
+            }
+            Log.e(TAG, "First ${poseSequence.backend} normalized sample: $normalizedSample")
         }
 
         Log.e(TAG, "Time taken: ${System.currentTimeMillis() - overallStartTime}ms")
