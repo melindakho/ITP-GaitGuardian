@@ -192,9 +192,10 @@ class RtmoPhasePredictor(
         }
 
         val labels = DEFAULT_PHASE_LABELS
-        val frameClassIndices = logits.map { frameLogits ->
+        val rawFrameClassIndices = logits.map { frameLogits ->
             frameLogits.indices.maxByOrNull { frameLogits[it] } ?: 0
         }
+        val frameClassIndices = enforceTugOrderSafe(rawFrameClassIndices)
         val frameLabels = frameClassIndices.map { classIndex ->
             labels.getOrElse(classIndex) { "Class-$classIndex" }
         }
@@ -213,6 +214,27 @@ class RtmoPhasePredictor(
             phaseDurationsSec = phaseDurations,
             orderedPhaseDurationsSec = orderedDurations
         )
+    }
+
+    private fun enforceTugOrderSafe(labels: List<Int>): List<Int> {
+        if (labels.isEmpty()) {
+            return emptyList()
+        }
+
+        val output = ArrayList<Int>(labels.size)
+        var state = labels.first()
+
+        labels.forEach { label ->
+            state = when {
+                label == state -> state
+                label == state + 1 -> label
+                state == 1 && label == 3 -> 3
+                else -> state
+            }
+            output.add(state)
+        }
+
+        return output
     }
 
     private fun extractLogits(output: Array<*>): List<FloatArray> {
