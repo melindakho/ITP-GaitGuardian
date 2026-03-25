@@ -17,7 +17,9 @@ data class PosePerson(
     val keypoints: FloatArray,
     val keypointCount: Int,
     val valuesPerKeypoint: Int,
-    val coordinateSpace: PoseCoordinateSpace
+    val coordinateSpace: PoseCoordinateSpace,
+    val bbox: FloatArray? = null,
+    val bboxScore: Float = 0f
 )
 
 data class PoseFrame(

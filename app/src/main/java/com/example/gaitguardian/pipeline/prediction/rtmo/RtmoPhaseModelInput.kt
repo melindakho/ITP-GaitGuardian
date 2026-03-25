@@ -13,6 +13,8 @@ data class RtmoPhaseModelInput(
     val detectedFrames: Int,
     val featuresPerFrame: Int,
     val keypointIndices: List<Int>,
+    val selectedTrackId: Int?,
+    val selectionStrategy: String,
     val frames: List<RtmoPhaseFrame>
 ) {
     val sequenceLength: Int

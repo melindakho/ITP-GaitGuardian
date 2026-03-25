@@ -1,4 +1,5 @@
 package com.example.gaitguardian.pipeline.prediction.rtmo
+import android.util.Log
 
 import com.example.gaitguardian.pipeline.pose.core.PoseBackend
 import com.example.gaitguardian.pipeline.pose.core.PosePerson
@@ -8,25 +9,30 @@ import kotlin.math.sqrt
 class RtmoPhaseModelInputAdapter(
     private val config: RtmoPredictionConfig = RtmoPredictionConfig
 ) {
+    companion object {
+        private const val TAG = "RtmoPhaseInput"
+        private const val TEMP_SELECTION_STRATEGY = "dominant_track_frequency"
+    }
 
     fun adapt(sequence: PoseSequence): RtmoPhaseModelInput {
         require(sequence.backend == PoseBackend.RTMO) {
             "RtmoPhaseModelInputAdapter only supports RTMO sequences"
         }
 
-        val selectedPersons = sequence.frames.map { frame ->
-            val selectedPersonIndex = frame.persons.indices.maxByOrNull { personIndex ->
-                averageConfidence(frame.persons[personIndex])
+        val trackedFrames = trackSequence(sequence)
+        val selectedTrackId = selectDominantTrackId(trackedFrames)
+        val selectedTrackFrames = trackedFrames.map { trackedDetections ->
+            trackedDetections.firstOrNull { tracked ->
+                selectedTrackId != null && tracked.trackId == selectedTrackId
             }
-            selectedPersonIndex?.let(frame.persons::get)
         }
-        val normalizationScale = computeSequenceScale(selectedPersons)
+        logTrackingSummary(trackedFrames, selectedTrackId)
+        val normalizationScale = computeSequenceScale(selectedTrackFrames.map { it?.pose })
+        Log.e(TAG, "normalizationScale=$normalizationScale")
 
-        val frames = sequence.frames.mapIndexed { frameIndex, frame ->
-            val selectedPersonIndex = frame.persons.indices.maxByOrNull { personIndex ->
-                averageConfidence(frame.persons[personIndex])
-            }
-            val selectedPerson = selectedPersonIndex?.let(frame.persons::get)
+        val frames = sequence.frames.mapIndexed { frameIndex, _ ->
+            val trackedPerson = selectedTrackFrames[frameIndex]
+            val selectedPerson = trackedPerson?.pose
             val features = selectedPerson?.let { buildNormalizedFeatures(it, normalizationScale) }
                 ?: FloatArray(config.featuresPerFrame)
 
@@ -34,7 +40,7 @@ class RtmoPhaseModelInputAdapter(
                 frameIndex = frameIndex,
                 features = features,
                 hasPose = selectedPerson != null,
-                sourcePersonIndex = selectedPersonIndex
+                sourcePersonIndex = trackedPerson?.detectionIndex
             )
         }
 
@@ -44,8 +50,28 @@ class RtmoPhaseModelInputAdapter(
             detectedFrames = frames.count { it.hasPose },
             featuresPerFrame = config.featuresPerFrame,
             keypointIndices = config.landmarkIndices.toList(),
+            selectedTrackId = selectedTrackId,
+            selectionStrategy = TEMP_SELECTION_STRATEGY,
             frames = frames
         )
+    }
+
+    private fun trackSequence(sequence: PoseSequence): List<List<RtmoTrackedPerson>> {
+        val tracker = RtmoPersonTracker()
+
+        return sequence.frames.map { frame ->
+            tracker.update(frame.persons)
+        }
+    }
+
+    private fun selectDominantTrackId(trackedFrames: List<List<RtmoTrackedPerson>>): Int? {
+        val counts = mutableMapOf<Int, Int>()
+        trackedFrames.forEach { trackedDetections ->
+            trackedDetections.forEach { tracked ->
+                counts[tracked.trackId] = (counts[tracked.trackId] ?: 0) + 1
+            }
+        }
+        return counts.maxByOrNull { it.value }?.key
     }
 
     private fun buildNormalizedFeatures(person: PosePerson, normalizationScale: Float): FloatArray {
@@ -85,9 +111,9 @@ class RtmoPhaseModelInputAdapter(
     private fun computeSequenceScale(persons: List<PosePerson?>): Float {
         var maxDistance = 0f
 
-        persons.forEach { person ->
+        persons.forEachIndexed { frameIndex, person ->
             if (person == null || person.keypointCount <= config.landmarkIndices.max()) {
-                return@forEach
+                return@forEachIndexed
             }
 
             val leftShoulder = reducedKeypoint(person, 1)
@@ -98,7 +124,15 @@ class RtmoPhaseModelInputAdapter(
             if (leftShoulder != null && rightShoulder != null && leftAnkle != null && rightAnkle != null) {
                 val midShoulder = midpoint(leftShoulder, rightShoulder)
                 val midAnkle = midpoint(leftAnkle, rightAnkle)
+                val distance = distance(midShoulder, midAnkle)
+
+                Log.e(
+                    TAG,
+                    "frame=$frameIndex midShoulder=(${midShoulder.first}, ${midShoulder.second}) " +
+                        "midAnkle=(${midAnkle.first}, ${midAnkle.second}) distance=$distance"
+                )
                 maxDistance = maxOf(maxDistance, distance(midShoulder, midAnkle))
+
             }
         }
 
@@ -125,5 +159,28 @@ class RtmoPhaseModelInputAdapter(
         val dx = first.first - second.first
         val dy = first.second - second.second
         return sqrt(dx * dx + dy * dy)
+    }
+
+    private fun logTrackingSummary(trackedFrames: List<List<RtmoTrackedPerson>>, selectedTrackId: Int?) {
+        Log.e(
+            TAG,
+            "trackSelection strategy=$TEMP_SELECTION_STRATEGY selectedTrackId=$selectedTrackId " +
+                "framesWithTracks=${trackedFrames.count { it.isNotEmpty() }}/${
+                    trackedFrames.size
+                }"
+        )
+
+        trackedFrames.forEachIndexed { frameIndex, trackedDetections ->
+            if (trackedDetections.isEmpty()) {
+                return@forEachIndexed
+            }
+
+            val summary = trackedDetections.joinToString(" ; ") { tracked ->
+                val bboxScore = "%.3f".format(tracked.pose.bboxScore)
+                val marker = if (tracked.trackId == selectedTrackId) "*" else ""
+                "track=${tracked.trackId}$marker detIndex=${tracked.detectionIndex} bbox=$bboxScore"
+            }
+            Log.e(TAG, "frame=$frameIndex tracks=$summary")
+        }
     }
 }

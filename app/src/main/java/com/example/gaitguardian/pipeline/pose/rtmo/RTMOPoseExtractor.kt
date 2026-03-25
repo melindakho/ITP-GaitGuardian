@@ -33,10 +33,16 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
     }
 
     data class VideoLandmarksResult(
-        val landmarks: List<List<FloatArray>?>,
+        val landmarks: List<List<Detection>?>,
         val fps: Float,
         val totalFrames: Int,
         val duration: Long
+    )
+
+    data class Detection(
+        val bbox: FloatArray,
+        val bboxScore: Float,
+        val keypoints: FloatArray
     )
 
     private var ortEnvironment: OrtEnvironment? = null
@@ -91,7 +97,7 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
             val totalFrames = ((duration / 1000.0) * fps).toInt()
             Log.d(TAG, "Video: ${duration}ms, ${fps}fps, $totalFrames frames")
 
-            val landmarksList = mutableListOf<List<FloatArray>?>()
+            val landmarksList = mutableListOf<List<Detection>?>()
 
             for (frameNumber in 0 until totalFrames) {
                 try {
@@ -109,6 +115,7 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
 
                     if (bitmap != null) {
                         val detections = runInference(bitmap, bitmap.width, bitmap.height)
+                        logRawDetections(frameNumber, detections)
                         landmarksList.add(if (detections.isEmpty()) null else detections)
                         bitmap.recycle()
                     } else {
@@ -144,12 +151,14 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
 
         val frames = result.landmarks.map { persons ->
             PoseFrame(
-                persons = persons.orEmpty().map { keypoints ->
+                persons = persons.orEmpty().map { detection ->
                     PosePerson(
-                        keypoints = keypoints,
+                        keypoints = detection.keypoints,
                         keypointCount = NUM_KEYPOINTS,
                         valuesPerKeypoint = 3,
-                        coordinateSpace = PoseCoordinateSpace.PIXEL
+                        coordinateSpace = PoseCoordinateSpace.PIXEL,
+                        bbox = detection.bbox,
+                        bboxScore = detection.bboxScore
                     )
                 }
             )
@@ -174,7 +183,7 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
         }
     }
 
-    private fun runInference(bitmap: Bitmap, origW: Int, origH: Int): List<FloatArray> {
+    private fun runInference(bitmap: Bitmap, origW: Int, origH: Int): List<Detection> {
         val session = ortSession ?: return emptyList()
         val env = ortEnvironment ?: return emptyList()
 
@@ -211,7 +220,7 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
             inputTensor.close()
             results.close()
 
-            val detections = mutableListOf<FloatArray>()
+            val detections = mutableListOf<Detection>()
 
             for (i in dets.indices) {
                 val det = dets[i] as FloatArray
@@ -219,6 +228,12 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
 
                 val personKps = kps[i] as Array<*>
                 val keypointArray = FloatArray(NUM_KEYPOINTS * 3)
+                val bboxArray = floatArrayOf(
+                    ((det[0] - resized.padLeft) / resized.scale).coerceIn(0f, origW.toFloat()),
+                    ((det[1] - resized.padTop) / resized.scale).coerceIn(0f, origH.toFloat()),
+                    ((det[2] - resized.padLeft) / resized.scale).coerceIn(0f, origW.toFloat()),
+                    ((det[3] - resized.padTop) / resized.scale).coerceIn(0f, origH.toFloat())
+                )
 
                 for (j in 0 until NUM_KEYPOINTS) {
                     val kp = personKps[j] as FloatArray
@@ -229,7 +244,13 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
                     keypointArray[j * 3 + 2] = kp[2]
                 }
 
-                detections.add(keypointArray)
+                detections.add(
+                    Detection(
+                        bbox = bboxArray,
+                        bboxScore = det[4],
+                        keypoints = keypointArray
+                    )
+                )
             }
 
             detections
@@ -264,5 +285,26 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
             padLeft = padLeft,
             padTop = padTop
         )
+    }
+
+    private fun logRawDetections(frameNumber: Int, detections: List<Detection>) {
+        if (detections.isEmpty()) {
+            return
+        }
+
+        val summary = detections.mapIndexed { detectionIndex, detection ->
+            val centerX = (detection.bbox[0] + detection.bbox[2]) / 2f
+            val centerY = (detection.bbox[1] + detection.bbox[3]) / 2f
+            val meanKeypointConfidence = detection.keypoints
+                .filterIndexed { index, _ -> index % 3 == 2 }
+                .average()
+                .toFloat()
+
+            "det=$detectionIndex bboxScore=${"%.3f".format(detection.bboxScore)} " +
+                "center=(${String.format("%.1f", centerX)}, ${String.format("%.1f", centerY)}) " +
+                "kpConf=${String.format("%.3f", meanKeypointConfidence)}"
+        }.joinToString(" ; ")
+
+        Log.e(TAG, "raw frame=$frameNumber detections=$summary")
     }
 }
