@@ -8,6 +8,8 @@ import com.example.gaitguardian.TugPrediction
 import com.example.gaitguardian.data.models.TugResult
 import com.example.gaitguardian.pipeline.prediction.rtmo.RtmoPhaseModelInputAdapter
 import com.example.gaitguardian.pipeline.prediction.rtmo.RtmoPhasePredictor
+import com.example.gaitguardian.pipeline.prediction.rtmo.RtmoSeverityFeatureBuilder
+import com.example.gaitguardian.pipeline.prediction.rtmo.RtmoSeverityPredictor
 import com.example.gaitguardian.pipeline.prediction.rtmo.RtmoSequenceNormalizer
 import com.example.gaitguardian.pipeline.prediction.rtmo.RtmoTemporalInterpolator
 import com.example.gaitguardian.pipeline.pose.core.PoseBackend
@@ -42,6 +44,8 @@ class GaitAnalysisClient(private val context: Context) {
     private val rtmoTemporalInterpolator = RtmoTemporalInterpolator()
     private val rtmoSequenceNormalizer = RtmoSequenceNormalizer()
     private val rtmoPhasePredictor = RtmoPhasePredictor(context)
+    private val rtmoSeverityFeatureBuilder = RtmoSeverityFeatureBuilder()
+    private val rtmoSeverityPredictor = RtmoSeverityPredictor(context)
     private val tugPredictor = TugPrediction(context)
     
     private var isInitialized = false
@@ -74,6 +78,13 @@ class GaitAnalysisClient(private val context: Context) {
                         return@withContext false
                     }
                     Log.e(TAG, "RTMO LSTM phase predictor initialized")
+
+                    Log.e(TAG, "Initializing RTMO severity MLP...")
+                    if (!rtmoSeverityPredictor.initialize()) {
+                        Log.e(TAG, "Failed to initialize RTMO severity MLP")
+                        return@withContext false
+                    }
+                    Log.e(TAG, "RTMO severity MLP initialized")
                 }
                 
                 isInitialized = true
@@ -315,6 +326,16 @@ class GaitAnalysisClient(private val context: Context) {
         val interpolatedSequence = rtmoTemporalInterpolator.interpolate(phaseInput)
         val normalizedSequence = rtmoSequenceNormalizer.normalize(interpolatedSequence)
         val phasePrediction = rtmoPhasePredictor.predict(normalizedSequence)
+        val severityFeatures = if (phasePrediction.success) {
+            rtmoSeverityFeatureBuilder.build(phasePrediction)
+        } else {
+            null
+        }
+        val severityPrediction = if (severityFeatures != null) {
+            rtmoSeverityPredictor.predict(severityFeatures)
+        } else {
+            null
+        }
         val firstDetectedFrame = phaseInput.frames.firstOrNull { it.hasPose }?.frameIndex ?: -1
         val firstDetectedPhaseFrame = phaseInput.frames.firstOrNull { it.hasPose }
 
@@ -380,16 +401,40 @@ class GaitAnalysisClient(private val context: Context) {
             )
             Log.e(TAG, "RTMO LSTM duration map: ${phasePrediction.phaseDurationsSec}")
             Log.e(TAG, "RTMO LSTM labels: firstFrames=${phasePrediction.frameLabels.take(10)}")
+            if (severityFeatures != null) {
+                Log.e(
+                    TAG,
+                    "RTMO severity features: " +
+                        severityFeatures.featureNames.zip(severityFeatures.featureVector.toList()).joinToString(
+                            prefix = "[",
+                            postfix = "]"
+                        ) { (name, value) -> "$name=${"%.3f".format(value)}" }
+                )
+            }
+            if (severityPrediction != null) {
+                val probabilitySummary = severityPrediction.classProbabilities.joinToString(
+                    prefix = "[",
+                    postfix = "]"
+                ) { "%.3f".format(it) }
+                Log.e(
+                    TAG,
+                    "RTMO severity result: success=${severityPrediction.success}, severity=${severityPrediction.severityLabel}, " +
+                        "classIndex=${severityPrediction.predictedClassIndex}, input=${severityPrediction.inputName}, " +
+                        "outputs=${severityPrediction.outputNames}, inputShape=${severityPrediction.inputShape?.contentToString()}, " +
+                        "outputShapes=${severityPrediction.outputShapes.map { it?.contentToString() }}, " +
+                        "probs=$probabilitySummary, " +
+                        "error=${severityPrediction.errorMessage}"
+                )
+            }
         }
 
         Log.e(TAG, "Time taken: ${System.currentTimeMillis() - overallStartTime}ms")
         return if (phasePrediction.success) {
             Log.e(
                 TAG,
-                "RTMO phase inference is wired and durations are now flowing through TugResult. " +
-                    "Severity MLP is still not connected yet."
+                "RTMO phase inference and severity MLP are now wired through TugResult."
             )
-            convertRtmoPhasePredictionToTugResult(phasePrediction)
+            convertRtmoPhasePredictionToTugResult(phasePrediction, severityPrediction)
         } else {
             Log.e(
                 TAG,
@@ -436,6 +481,7 @@ class GaitAnalysisClient(private val context: Context) {
             // Close pose estimation
             poseExtractor.cleanup()
             rtmoPhasePredictor.cleanup()
+            rtmoSeverityPredictor.cleanup()
             Log.d(TAG, "GaitAnalysisClient cleaned up successfully")
         } catch (e: Exception) {
             Log.w(TAG, "Error during cleanup", e)
@@ -470,7 +516,10 @@ class GaitAnalysisClient(private val context: Context) {
         )
     }
 
-    private fun convertRtmoPhasePredictionToTugResult(prediction: com.example.gaitguardian.pipeline.prediction.rtmo.RtmoPhasePredictionResult): TugResult {
+    private fun convertRtmoPhasePredictionToTugResult(
+        prediction: com.example.gaitguardian.pipeline.prediction.rtmo.RtmoPhasePredictionResult,
+        severityPrediction: com.example.gaitguardian.pipeline.prediction.rtmo.RtmoSeverityPredictionResult?
+    ): TugResult {
         val phaseBreakdown = prediction.phaseDurationsSec.mapValues { it.value.toDouble() }
         val sit = phaseBreakdown["Sit-To-Stand"] ?: 0.0
         val walkFrom = phaseBreakdown["Walk-From-Chair"] ?: 0.0
@@ -485,7 +534,7 @@ class GaitAnalysisClient(private val context: Context) {
             sitToStandDuration = sit,
             walkingDuration = walkFrom + walkTo,
             standToSitDuration = stand,
-            riskAssessment = "RTMO_LSTM_ONLY",
+            riskAssessment = severityPrediction?.severityLabel ?: "Unknown",
             analysisDate = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
                 .format(java.util.Date()),
             phaseBreakdown = phaseBreakdown
