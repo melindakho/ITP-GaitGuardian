@@ -15,7 +15,7 @@ class RtmoSequenceNormalizer(
             Array(sequence.jointCount) { jointIndex ->
                 floatArrayOf(
                     sequence.coordinates[frameIndex][jointIndex][0] / normalizationScale,
-                    sequence.coordinates[frameIndex][jointIndex][1] / normalizationScale
+                    1f - (sequence.coordinates[frameIndex][jointIndex][1] / normalizationScale)
                 )
             }
         }
