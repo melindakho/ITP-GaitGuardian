@@ -30,6 +30,7 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
         private const val INPUT_SIZE = 416
         private const val NUM_KEYPOINTS = 17
         private const val BBOX_CONF_THRESHOLD = 0.5f
+        private const val TARGET_PROCESSING_FPS = 12f
     }
 
     data class VideoLandmarksResult(
@@ -82,30 +83,20 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
                 MediaMetadataRetriever.METADATA_KEY_DURATION
             )?.toLongOrNull() ?: 0L
 
-            val frameRateString = retriever.extractMetadata(
-                MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE
-            )
-            var fps = frameRateString?.toFloatOrNull() ?: 30f
-            if (fps <= 0 || fps > 120) fps = 30f
+            val processingFps = TARGET_PROCESSING_FPS
+            val totalFrames = ((duration / 1000.0) * processingFps).toInt().coerceAtLeast(1)
 
-            val totalFrames = ((duration / 1000.0) * fps).toInt()
-            Log.d(TAG, "Video: ${duration}ms, ${fps}fps, $totalFrames frames")
+            Log.d(
+                TAG,
+                "Video: ${duration}ms, processingFps=${"%.2f".format(processingFps)}, sampledFrames=$totalFrames"
+            )
 
             val landmarksList = mutableListOf<List<FloatArray>?>()
 
             for (frameNumber in 0 until totalFrames) {
                 try {
-                    val bitmap = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                        try {
-                            retriever.getFrameAtIndex(frameNumber)
-                        } catch (e: Exception) {
-                            val timeUs = (frameNumber * 1_000_000L / fps).toLong()
-                            retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
-                        }
-                    } else {
-                        val timeUs = (frameNumber * 1_000_000L / fps).toLong()
-                        retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
-                    }
+                    val timeUs = (frameNumber * 1_000_000L / processingFps).toLong()
+                    val bitmap = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
 
                     if (bitmap != null) {
                         val detections = runInference(bitmap, bitmap.width, bitmap.height)
@@ -126,7 +117,7 @@ class RTMOPoseExtractor(private val context: Context) : PoseExtractor {
 
             VideoLandmarksResult(
                 landmarks = landmarksList,
-                fps = fps,
+                fps = processingFps,
                 totalFrames = totalFrames,
                 duration = duration
             )
