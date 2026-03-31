@@ -483,9 +483,8 @@ fun TUGsubTasksList(
     val tugSubTasks = listOf(
         "Sit-To-Stand" to subtaskDuration?.sitToStand,
         "Walk-From-Chair" to subtaskDuration?.walkFromChair,
-        "Turn-First" to subtaskDuration?.turnFirst,
+        "Turning" to subtaskDuration?.turnFirst,
         "Walk-To-Chair" to subtaskDuration?.walkToChair,
-        "Turn-Second" to subtaskDuration?.turnSecond,
         "Stand-To-Sit" to subtaskDuration?.standToSit
     )
 
