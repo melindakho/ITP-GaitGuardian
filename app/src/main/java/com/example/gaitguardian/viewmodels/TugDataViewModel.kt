@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.gaitguardian.analysis.VideoViewType
 import com.example.gaitguardian.api.GaitAnalysisResponse
 import com.example.gaitguardian.data.roomDatabase.tug.TUGAnalysis
 import com.example.gaitguardian.data.roomDatabase.tug.TUGAssessment
@@ -53,6 +54,14 @@ class TugDataViewModel(private val tugRepository: TUGAssessmentRepository) : Vie
     fun setOnMedication(status: Boolean) {
         _onMedication.value = status
         Log.d("PatientViewModel", "Medication status set to: $status")
+    }
+
+    private val _selectedVideoViewType = MutableStateFlow(VideoViewType.SIDE)
+    val selectedVideoViewType: StateFlow<VideoViewType> = _selectedVideoViewType
+
+    fun setSelectedVideoViewType(viewType: VideoViewType) {
+        _selectedVideoViewType.value = viewType
+        Log.d("TugViewModel", "Selected video view type: ${viewType.routeValue}")
     }
 
     // Update the TUG Assessment (Medication) After Analysis is completed

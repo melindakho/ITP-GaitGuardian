@@ -45,6 +45,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.example.gaitguardian.NotificationService
+import com.example.gaitguardian.analysis.VideoViewType
 import com.example.gaitguardian.api.GaitAnalysisClient
 import com.example.gaitguardian.api.GaitAnalysisResponse
 import com.example.gaitguardian.api.GaitMetrics
@@ -71,6 +72,7 @@ fun LoadingScreen(
 ) {
 
     val latestAssessment by tugDataViewModel.latestAssessment.collectAsState()
+    val selectedVideoViewType by tugDataViewModel.selectedVideoViewType.collectAsState()
     val outputPath = latestAssessment?.videoTitle
     val context = LocalContext.current
     val videoFile = outputPath?.let { File(it) }
@@ -122,7 +124,12 @@ fun LoadingScreen(
                 Log.d("LoadingScreen", "video absolute path is ${videoFile.absolutePath}")
                 // create a WorkManager request to analyse the video
                 val workRequest = OneTimeWorkRequestBuilder<VideoAnalysisWorker>()
-                    .setInputData(workDataOf("VIDEO_PATH" to videoFile.absolutePath))
+                    .setInputData(
+                        workDataOf(
+                            "VIDEO_PATH" to videoFile.absolutePath,
+                            "VIDEO_VIEW_TYPE" to selectedVideoViewType.routeValue
+                        )
+                    )
                     .addTag("video_analysis")
                     .build()
 
@@ -394,9 +401,11 @@ class VideoAnalysisWorker(
 
     override suspend fun doWork(): Result {
         val videoPath = inputData.getString("VIDEO_PATH") ?: return Result.failure()
+        val videoViewType = VideoViewType.fromRouteValue(inputData.getString("VIDEO_VIEW_TYPE"))
         Log.d("VideoAnalysisWorker", "========================================")
         Log.d("VideoAnalysisWorker", "🎬 NEW VIDEO ANALYSIS STARTED")
         Log.d("VideoAnalysisWorker", "Video Path: $videoPath")
+        Log.d("VideoAnalysisWorker", "Video View Type: ${videoViewType.routeValue}")
         Log.d("VideoAnalysisWorker", "Work Request ID: $id")
         Log.d("VideoAnalysisWorker", "Timestamp: ${System.currentTimeMillis()}")
         Log.d("VideoAnalysisWorker", "========================================")

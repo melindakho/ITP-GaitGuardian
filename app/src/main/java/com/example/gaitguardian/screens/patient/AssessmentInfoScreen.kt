@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
+import com.example.gaitguardian.analysis.VideoViewType
 import com.example.gaitguardian.ui.theme.*
 import com.example.gaitguardian.viewmodels.PatientViewModel
 import com.example.gaitguardian.viewmodels.TugDataViewModel
@@ -37,6 +38,7 @@ fun AssessmentInfoScreen(
 
     val firstPrivacyCheck by patientViewModel.firstPrivacyCheck.collectAsState()
     val onMedication by tugViewModel.onMedication.collectAsState()
+    val selectedVideoViewType by tugViewModel.selectedVideoViewType.collectAsState()
 
     // Haptic feedback function
     fun provideHapticFeedback() {
@@ -103,6 +105,39 @@ fun AssessmentInfoScreen(
                         modifier = Modifier.weight(1f)
                     )
                 }
+                Spacer(Modifier.height(16.dp))
+
+                Text(
+                    "Choose camera view",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontSize = 24.sp,
+                    color = Color.Black
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    VideoViewTypeButton(
+                        text = VideoViewType.SIDE.displayLabel,
+                        isSelected = selectedVideoViewType == VideoViewType.SIDE,
+                        onClick = {
+                            provideHapticFeedback()
+                            tugViewModel.setSelectedVideoViewType(VideoViewType.SIDE)
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                    VideoViewTypeButton(
+                        text = VideoViewType.FRONT.displayLabel,
+                        isSelected = selectedVideoViewType == VideoViewType.FRONT,
+                        onClick = {
+                            provideHapticFeedback()
+                            tugViewModel.setSelectedVideoViewType(VideoViewType.FRONT)
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
 //            OutlinedTextField(
 //                value = comments,
 //                onValueChange = {
@@ -153,6 +188,28 @@ fun AssessmentInfoScreen(
         ) {
             Text("Continue", color = Color.Black, fontSize = 18.sp)
         }
+    }
+}
+
+@Composable
+fun VideoViewTypeButton(
+    text: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (isSelected) ButtonActive else Color.White,
+            contentColor = Color.Black
+        ),
+        shape = RoundedCornerShape(16.dp),
+        modifier = modifier
+            .padding(vertical = 8.dp)
+            .size(width = 150.dp, height = 50.dp)
+    ) {
+        Text(text, color = Color.Black, fontWeight = FontWeight.Bold)
     }
 }
 
