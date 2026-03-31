@@ -410,7 +410,7 @@ class VideoAnalysisWorker(
         Log.d("VideoAnalysisWorker", "Timestamp: ${System.currentTimeMillis()}")
         Log.d("VideoAnalysisWorker", "========================================")
 
-        val gaitClient = GaitAnalysisClient(applicationContext)
+        val gaitClient = GaitAnalysisClient(applicationContext, videoViewType)
         val videoFile = File(videoPath)
         
         if (!videoFile.exists()) {

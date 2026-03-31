@@ -6,16 +6,19 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
+import com.example.gaitguardian.analysis.VideoViewType
 import java.nio.FloatBuffer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class RtmoPhasePredictor(
-    private val context: Context
+    private val context: Context,
+    private val videoViewType: VideoViewType
 ) {
     companion object {
         private const val TAG = "RtmoPhasePredictor"
-        private const val MODEL_FILE = "lstm_phases.onnx"
+        private const val SIDE_MODEL_FILE = "side_lstm_phases.onnx"
+        private const val FRONT_MODEL_FILE = "front_lstm_phases.onnx"
         val DEFAULT_PHASE_LABELS = listOf(
             "Sit-To-Stand",
             "Walk-From-Chair",
@@ -34,12 +37,17 @@ class RtmoPhasePredictor(
                 return@withContext true
             }
             ortEnvironment = OrtEnvironment.getEnvironment()
-            val modelBytes = context.assets.open(MODEL_FILE).readBytes()
+            val modelFile = when (videoViewType) {
+                VideoViewType.SIDE -> SIDE_MODEL_FILE
+                VideoViewType.FRONT -> FRONT_MODEL_FILE
+            }
+            Log.e(TAG, "Initializing LSTM phase model for ${videoViewType.routeValue} view: $modelFile")
+            val modelBytes = context.assets.open(modelFile).readBytes()
             session = ortEnvironment!!.createSession(modelBytes)
             logModelMetadata(session!!)
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize LSTM phase model", e)
+            Log.e(TAG, "Failed to initialize LSTM phase model for ${videoViewType.routeValue} view", e)
             false
         }
     }

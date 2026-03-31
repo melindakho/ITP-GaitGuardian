@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Log
 import com.example.gaitguardian.FrameProgressCallback
 import com.example.gaitguardian.TugPrediction
+import com.example.gaitguardian.analysis.VideoViewType
 import com.example.gaitguardian.data.models.TugResult
 import com.example.gaitguardian.pipeline.prediction.rtmo.RtmoPhaseModelInputAdapter
 import com.example.gaitguardian.pipeline.prediction.rtmo.RtmoPhasePredictor
@@ -32,7 +33,10 @@ import java.io.InputStream
  * 
  * Main entry point: analyzeVideoFile() uses analyzeVideoWithCorrectFPS()
  */
-class GaitAnalysisClient(private val context: Context) {
+class GaitAnalysisClient(
+    private val context: Context,
+    private val videoViewType: VideoViewType = VideoViewType.SIDE
+) {
     companion object {
         private const val TAG = "GaitAnalysisClient"
         private const val MEDIAPIPE_KEYPOINT_COUNT = 33
@@ -43,7 +47,7 @@ class GaitAnalysisClient(private val context: Context) {
     private val rtmoPhaseInputAdapter = RtmoPhaseModelInputAdapter()
     private val rtmoTemporalInterpolator = RtmoTemporalInterpolator()
     private val rtmoSequenceNormalizer = RtmoSequenceNormalizer()
-    private val rtmoPhasePredictor = RtmoPhasePredictor(context)
+    private val rtmoPhasePredictor = RtmoPhasePredictor(context, videoViewType)
     private val rtmoSeverityFeatureBuilder = RtmoSeverityFeatureBuilder()
     private val rtmoSeverityPredictor = RtmoSeverityPredictor(context)
     private val tugPredictor = TugPrediction(context)
@@ -72,7 +76,7 @@ class GaitAnalysisClient(private val context: Context) {
                 Log.e(TAG, "Pose estimation model initialized")
 
                 if (ACTIVE_BACKEND == PoseBackend.RTMO) {
-                    Log.e(TAG, "Initializing RTMO LSTM phase predictor...")
+                    Log.e(TAG, "Initializing RTMO LSTM phase predictor for ${videoViewType.routeValue} view...")
                     if (!rtmoPhasePredictor.initialize()) {
                         Log.e(TAG, "Failed to initialize RTMO LSTM phase predictor")
                         return@withContext false
@@ -154,6 +158,7 @@ class GaitAnalysisClient(private val context: Context) {
             Log.d(TAG, "ANALYZING VIDEO FILE: ${videoFile.name} (${videoFile.length()} bytes)")
             Log.d(TAG, "File exists: ${videoFile.exists()}")
             Log.d(TAG, "File path: ${videoFile.absolutePath}")
+            Log.d(TAG, "Video view type: ${videoViewType.routeValue}")
             
             if (!initializeIfNeeded()) {
                 Log.e(TAG, "FILE Analysis - Failed to initialize")
@@ -366,6 +371,7 @@ class GaitAnalysisClient(private val context: Context) {
                 "output=${phasePrediction.outputName}, inputShape=${phasePrediction.inputShape?.contentToString()}, " +
                 "outputShape=${phasePrediction.outputShape?.contentToString()}, error=${phasePrediction.errorMessage}"
         )
+        Log.e(TAG, "RTMO active view type: ${videoViewType.routeValue}")
 
         if (firstDetectedPhaseFrame != null) {
             val rawSample = (0 until minOf(3, phaseInput.keypointIndices.size)).joinToString(" | ") { index ->
