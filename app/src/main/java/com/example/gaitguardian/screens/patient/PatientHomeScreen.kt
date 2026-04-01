@@ -7,7 +7,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -33,7 +31,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -53,16 +50,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.work.WorkInfo
-import androidx.work.Data
 import androidx.work.WorkManager
 import com.example.gaitguardian.api.GaitAnalysisResponse
-import com.example.gaitguardian.data.roomDatabase.tug.TUGAnalysis
 import com.example.gaitguardian.ui.theme.ButtonActive
 import com.example.gaitguardian.viewmodels.TugDataViewModel
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 
 
 @Composable
@@ -80,19 +74,11 @@ fun PatientHomeScreen(
 
     var previousTiming by remember { mutableFloatStateOf(0f) }
     var latestTiming by remember { mutableFloatStateOf(0f) }
-    var latestAnalysis by remember { mutableStateOf<TUGAnalysis?>(null) }
     val latestAnalysisFlow by tugViewModel.latestAnalysis.collectAsState()
-//    val severity = latestAnalysis?.severity ?: "-"
-//    val totalTime = latestAnalysis?.timeTaken?.toFloat() ?: 0f
     val severity = latestAnalysisFlow?.severity ?: "-" // will auto update the result card as it is observing (more for WorkManager update)
     val totalTime = latestAnalysisFlow?.timeTaken?.toFloat() ?: 0f
     var showTutorial by remember { mutableStateOf(false) } // <-- control overlay
 
-    LaunchedEffect(Unit) {
-        tugViewModel.getLatestTwoDurations()
-        tugViewModel.getLatestTUGAssessment()
-        latestAnalysis = tugViewModel.getLatestTugAnalysis()
-    }
 //    Log.d("patienthomescreen", "latest tug analysis : $latestAnalysis")
     if (latestTwoDurations.size >= 2) {
         latestTiming = latestTwoDurations[0]

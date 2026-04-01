@@ -23,8 +23,13 @@ class TugDataViewModel(private val tugRepository: TUGAssessmentRepository) : Vie
     init {
         viewModelScope.launch {
             tugRepository.allTUGAssessments.collect { tugList ->
-                _allTUGAssessments.value = tugList
-                Log.d("TugVM", "Loaded ${tugList.size} assessments: $tugList")
+                val sortedAssessments = tugList.sortedByDescending { it.dateTime }
+                _allTUGAssessments.value = sortedAssessments
+                _latestAssessment.value = sortedAssessments.firstOrNull()
+                _latestTwoDurations.value = sortedAssessments
+                    .take(2)
+                    .map { it.videoDuration }
+                Log.d("TugVM", "Loaded ${sortedAssessments.size} assessments: $sortedAssessments")
             }
         }
         viewModelScope.launch {

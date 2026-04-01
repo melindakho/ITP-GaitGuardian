@@ -15,10 +15,24 @@ interface TugAnalysisDao {
     suspend fun insertNewTUGAnalysis(tugAnalysis: TUGAnalysis)
 
     // For Updating Result Card
-    @Query("SELECT * FROM tug_analysis_table ORDER BY testId DESC LIMIT 1")
+    @Query(
+        """
+        SELECT a.* FROM tug_analysis_table a
+        INNER JOIN tug_assessment_table t ON t.testId = a.testId
+        ORDER BY t.dateTime DESC
+        LIMIT 1
+        """
+    )
     suspend fun getLatestTugAnalysis(): TUGAnalysis?
 
-    @Query("SELECT * FROM tug_analysis_table ORDER BY testId DESC LIMIT 1")
+    @Query(
+        """
+        SELECT a.* FROM tug_analysis_table a
+        INNER JOIN tug_assessment_table t ON t.testId = a.testId
+        ORDER BY t.dateTime DESC
+        LIMIT 1
+        """
+    )
     fun getLatestTugAnalysisFlow(): Flow<TUGAnalysis?>
 
     // Get specific analysis by ID
@@ -26,7 +40,14 @@ interface TugAnalysisDao {
     suspend fun getTugAnalysisById(analysisId: String): TUGAnalysis?
 
     //TODO: Update Result Card with this
-    @Query("SELECT timeTaken FROM tug_analysis_table ORDER BY testId DESC LIMIT 2")
+    @Query(
+        """
+        SELECT a.timeTaken FROM tug_analysis_table a
+        INNER JOIN tug_assessment_table t ON t.testId = a.testId
+        ORDER BY t.dateTime DESC
+        LIMIT 2
+        """
+    )
     suspend fun getLatestTwoTimes(): List<Double>
 
     @Query("SELECT sitToStand, walkFromChair, turnFirst, walkToChair, turnSecond, standToSit FROM tug_analysis_table WHERE testId = :id ")
