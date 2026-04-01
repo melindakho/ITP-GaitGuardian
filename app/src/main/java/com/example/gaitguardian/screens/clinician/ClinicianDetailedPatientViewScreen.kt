@@ -2,6 +2,7 @@ package com.example.gaitguardian.screens.clinician
 
 import android.content.Context
 import android.content.Intent
+import android.media.MediaMetadataRetriever
 import android.os.Environment
 import android.util.Log
 import androidx.compose.foundation.background
@@ -563,6 +564,10 @@ fun JetpackComposeBasicLineChart(subtasks: List<TUGAnalysis>, modifier: Modifier
 @Composable
 fun VideoButton(videoTitle: String, videoDuration: Float, navController: NavController) {
     val videoFile = File(videoTitle)
+    val displayDuration = remember(videoTitle, videoDuration) {
+        if (videoDuration > 0f) videoDuration else getVideoDurationSeconds(videoTitle)
+    }
+
     if (videoFile.exists()) {
         Button(
             onClick = {
@@ -575,7 +580,10 @@ fun VideoButton(videoTitle: String, videoDuration: Float, navController: NavCont
                 contentColor = Color.Black
             )
         ) {
-            Text("Watch Assessment Recording [${videoDuration}s]", fontWeight = FontWeight.Bold)
+            Text(
+                "Watch Assessment Recording [${"%.2f".format(displayDuration)}s]",
+                fontWeight = FontWeight.Bold
+            )
         }
     } else {
         Box(
@@ -585,12 +593,30 @@ fun VideoButton(videoTitle: String, videoDuration: Float, navController: NavCont
                 .padding(12.dp)
         ) {
             Text(
-                text = "No Video Available [${videoDuration}s]",
+                text = "No Video Available [${"%.2f".format(displayDuration)}s]",
                 color = Color(0xFFE53E3E),
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium
             )
         }
         Spacer(modifier = Modifier.height(8.dp))
+    }
+}
+
+private fun getVideoDurationSeconds(videoPath: String): Float {
+    if (videoPath.isBlank()) return 0f
+
+    val retriever = MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(videoPath)
+        val durationMs = retriever.extractMetadata(
+            MediaMetadataRetriever.METADATA_KEY_DURATION
+        )?.toLongOrNull() ?: 0L
+        durationMs / 1000f
+    } catch (e: Exception) {
+        Log.e("ClinicianVideoButton", "Failed to read video duration for $videoPath", e)
+        0f
+    } finally {
+        retriever.release()
     }
 }
