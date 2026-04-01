@@ -196,7 +196,7 @@ fun ClinicianHomeScreen(
                     }
                 }
             } else {
-                items(filteredVideos.reversed()) { video ->
+                items(filteredVideos) { video ->
                     val finalMedicationState = video.onMedication != video.updateMedication
                     val matchedAnalysis = allTugAnalysis.find { it.testId == video.testId }
                     val finalSeverity = matchedAnalysis?.severity ?: "N/A"
