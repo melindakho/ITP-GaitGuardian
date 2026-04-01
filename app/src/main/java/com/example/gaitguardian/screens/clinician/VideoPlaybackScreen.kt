@@ -456,9 +456,8 @@ fun prepareSubtaskJumpTimings(subtask: subtaskDuration): List<Triple<String, Lon
     val labels = listOf(
         "Sit to Stand",
         "Walk from Chair",
-        "Turn First",
+        "Turning",
         "Walk to Chair",
-        "Turn Second",
         "Stand to Sit"
     )
 
@@ -467,7 +466,6 @@ fun prepareSubtaskJumpTimings(subtask: subtaskDuration): List<Triple<String, Lon
         subtask.walkFromChair,
         subtask.turnFirst,
         subtask.walkToChair,
-        subtask.turnSecond,
         subtask.standToSit
     )
 

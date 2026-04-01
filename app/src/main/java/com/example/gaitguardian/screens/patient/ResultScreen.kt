@@ -295,9 +295,8 @@ fun TugBreakdownCard(
                 // Use data from the specific TUGAnalysis database entry
                 TugPhaseRow("Sit-to-stand", analysis?.sitToStand ?: 0.0)
                 TugPhaseRow("Walk-from-chair", analysis?.walkFromChair ?: 0.0)
-                TugPhaseRow("Turn-first", analysis?.turnFirst ?: 0.0)
+                TugPhaseRow("Turning", analysis?.turnFirst ?: 0.0)
                 TugPhaseRow("Walk-to-chair", analysis?.walkToChair ?: 0.0)
-                TugPhaseRow("Turn-second", analysis?.turnSecond ?: 0.0)
                 TugPhaseRow("Stand-to-sit", analysis?.standToSit ?: 0.0)
             }
 

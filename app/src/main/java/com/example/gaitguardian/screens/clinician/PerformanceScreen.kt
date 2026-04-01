@@ -77,9 +77,8 @@ fun PerformanceChart(
 //        Map "Sit-to-Stand" to sitToStand so that I can retrieve the values direct
         "Sit-to-Stand" to { it.sitToStand.toFloat() },
         "Walk from Chair" to { it.walkFromChair.toFloat() },
-        "Turn First" to { it.turnFirst.toFloat() },
+        "Turning" to { it.turnFirst.toFloat() },
         "Walk to Chair" to { it.walkToChair.toFloat() },
-        "Turn Second" to { it.turnSecond.toFloat() },
         "Stand-to-Sit" to { it.standToSit.toFloat() },
         "All Tasks" to { it.timeTaken.toFloat() }
     )
@@ -161,9 +160,8 @@ fun TaskDropdownFilter(
         "All Tasks",
         "Sit-to-Stand",
         "Walk from Chair",
-        "Turn First",
+        "Turning",
         "Walk to Chair",
-        "Turn Second",
         "Stand-to-Sit"
     )
 
