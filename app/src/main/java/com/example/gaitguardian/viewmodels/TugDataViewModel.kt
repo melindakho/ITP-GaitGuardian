@@ -1,5 +1,7 @@
 package com.example.gaitguardian.viewmodels
 
+import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -18,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.io.File
 
 class TugDataViewModel(private val tugRepository: TUGAssessmentRepository) : ViewModel() {
     init {
@@ -110,6 +113,33 @@ class TugDataViewModel(private val tugRepository: TUGAssessmentRepository) : Vie
         }
     }
 
+    fun backfillMissingVideoDurations(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val assessmentsToBackfill = allTUGAssessments.value.filter {
+                it.videoDuration <= 0f && !it.videoTitle.isNullOrBlank()
+            }
+
+            assessmentsToBackfill.forEach { assessment ->
+                val videoPath = assessment.videoTitle ?: return@forEach
+                val videoFile = File(videoPath)
+                if (!videoFile.exists()) return@forEach
+
+                val computedDuration = getVideoDurationSeconds(context, videoPath)
+                if (computedDuration > 0f) {
+                    tugRepository.updateVideoDuration(assessment.testId, computedDuration)
+                    if (_selectedTUGAssessment.value?.testId == assessment.testId) {
+                        _selectedTUGAssessment.value =
+                            _selectedTUGAssessment.value?.copy(videoDuration = computedDuration)
+                    }
+                    Log.d(
+                        "TugVM",
+                        "Backfilled videoDuration=${computedDuration}s for assessment=${assessment.testId}"
+                    )
+                }
+            }
+        }
+    }
+
     // END PATIENT
 
     // Clinician
@@ -199,6 +229,22 @@ class TugDataViewModel(private val tugRepository: TUGAssessmentRepository) : Vie
             }
             throw IllegalArgumentException("Unknown ViewModel class")
         }
+    }
+}
+
+private fun getVideoDurationSeconds(context: Context, videoPath: String): Float {
+    val retriever = MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(context, android.net.Uri.fromFile(File(videoPath)))
+        val durationMs = retriever.extractMetadata(
+            MediaMetadataRetriever.METADATA_KEY_DURATION
+        )?.toLongOrNull() ?: 0L
+        durationMs / 1000f
+    } catch (e: Exception) {
+        Log.e("TugVM", "Failed to backfill video duration for $videoPath", e)
+        0f
+    } finally {
+        retriever.release()
     }
 }
 
