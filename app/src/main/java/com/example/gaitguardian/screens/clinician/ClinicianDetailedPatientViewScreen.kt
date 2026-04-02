@@ -104,6 +104,7 @@ fun ClinicianDetailedPatientViewScreen(
 
 
     val patientInfo by patientViewModel.patient.collectAsState()
+    val context = LocalContext.current
 
     val allSubtasks by tugViewModel.allTUGAnalysis.collectAsState()
     val assessment by tugViewModel.selectedTUGAssessment.collectAsState()
@@ -142,6 +143,10 @@ fun ClinicianDetailedPatientViewScreen(
             clinicianComments = it.notes.orEmpty()
             isReviewed = it.watchStatus
         }
+    }
+
+    LaunchedEffect(context) {
+        tugViewModel.backfillMissingVideoDurations(context)
     }
     Column(
         modifier = modifier

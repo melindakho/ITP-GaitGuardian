@@ -88,6 +88,10 @@ fun PatientHomeScreen(
     val context = LocalContext.current
     val workManager = WorkManager.getInstance(context)
 
+    LaunchedEffect(context) {
+        tugViewModel.backfillMissingVideoDurations(context)
+    }
+
     // Observe all video analysis work
     val workInfoList by workManager
         .getWorkInfosByTagLiveData("video_analysis")

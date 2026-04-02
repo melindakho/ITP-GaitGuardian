@@ -32,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -46,6 +47,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavController
 import com.example.gaitguardian.data.roomDatabase.patient.Patient
 import com.example.gaitguardian.ui.theme.bgColor
@@ -72,6 +74,7 @@ fun ClinicianHomeScreen(
     tugViewModel: TugDataViewModel,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
 
     // Load necessary information from ViewModels for updating the UI in this screen
     val patientInfo by patientViewModel.patient.collectAsState()
@@ -93,6 +96,10 @@ fun ClinicianHomeScreen(
     var showPendingVideos by remember { mutableStateOf(false) }
     var showCriticalVideos by remember { mutableStateOf(false) }
     var showReviewedVideos by remember { mutableStateOf(false) }
+
+    LaunchedEffect(context) {
+        tugViewModel.backfillMissingVideoDurations(context)
+    }
 
     // Used to update the list of filtered assessments
     val filteredVideos = when {

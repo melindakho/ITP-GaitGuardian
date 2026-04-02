@@ -28,6 +28,11 @@ class TUGAssessmentRepository(private val tugDao: TugDao, private val tugAnalysi
     }
 
     @WorkerThread
+    suspend fun updateVideoDuration(id: String, videoDuration: Float) {
+        tugDao.updateVideoDuration(id, videoDuration)
+    }
+
+    @WorkerThread
     suspend fun getLatestTwoDuration(): List<Float> {
         return tugDao.getLatestTwoDurations()
     }
